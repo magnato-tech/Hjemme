@@ -38,7 +38,11 @@ function MainApp() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 pt-6 pb-24 md:pb-12">
+      <main
+        className={`flex-1 min-h-0 max-w-6xl w-full mx-auto px-4 sm:px-6 pt-4 pb-20 md:pb-4 ${
+          activeTab === 'calendar' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+        }`}
+      >
         {activeTab === 'dashboard' && (
           <DashboardToday
             setActiveTab={setActiveTab}
@@ -57,9 +61,9 @@ function MainApp() {
         )}
 
         {activeTab === 'calendar' && (
-          <CalendarModule
-            onOpenAddEvent={() => setIsAddCalendarEventOpen(true)}
-          />
+          <div className="flex-1 min-h-0">
+            <CalendarModule onOpenAddEvent={() => setIsAddCalendarEventOpen(true)} />
+          </div>
         )}
 
         {activeTab === 'week' && <WeekOverview />}

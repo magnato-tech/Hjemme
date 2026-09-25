@@ -132,7 +132,8 @@ interface FamilyContextType {
   updateGoogleCalendarConfig: (updates: Partial<GoogleCalendarConfig>) => Promise<void>;
   addCustomGoogleCalendar: (id: string, name: string, color?: string) => Promise<void>;
   updateGoogleCalendarName: (id: string, newName: string) => Promise<void>;
-  toggleCalendarVisibility: (id: string, visible: boolean) => Promise<void>;
+  toggleCalendarViewVisibility: (id: string, visible: boolean) => Promise<void>;
+  toggleCalendarDisabled: (id: string, active: boolean) => Promise<void>;
   toggleCarCalendar: (id: string) => Promise<void>;
   setCalendarPrivacyMode: (id: string, mode: 'full' | 'busy_only') => Promise<void>;
   updateCalendarSettings: (calId: string, updates: Partial<PerCalendarConfig>, newCalendarId?: string) => Promise<void>;
@@ -922,18 +923,17 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const toggleCalendarVisibility = async (id: string, visible: boolean): Promise<void> => {
+  const toggleCalendarViewVisibility = async (id: string, visible: boolean): Promise<void> => {
     setAvailableGoogleCalendars((prev) =>
       prev.map((c) => (c.id === id ? { ...c, enabledForDisplay: visible } : c))
     );
 
-    const currentDisabled = new Set(settings.disabledCalendarIds || []);
+    const viewHidden = new Set(settings.calendarViewHiddenIds || []);
     if (visible) {
-      currentDisabled.delete(id);
+      viewHidden.delete(id);
     } else {
-      currentDisabled.add(id);
+      viewHidden.add(id);
     }
-    const disabledList = Array.from(currentDisabled);
 
     const saved = settings.savedCalendars || [];
     const calObj = availableGoogleCalendars.find((c) => c.id === id);
@@ -944,9 +944,47 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ? [...saved, { ...calObj, enabledForDisplay: visible }]
       : saved;
 
+    const currentCalendarConfigs = { ...(settings.calendarConfigs || {}) };
+    if (currentCalendarConfigs[id]) {
+      currentCalendarConfigs[id] = {
+        ...currentCalendarConfigs[id],
+        enabledForDisplay: visible,
+      };
+    }
+
     const newSettings: FamilySettings = {
       ...settings,
-      disabledCalendarIds: disabledList,
+      calendarViewHiddenIds: Array.from(viewHidden),
+      savedCalendars: updatedSaved,
+      calendarConfigs: currentCalendarConfigs,
+    };
+    setSettings(newSettings);
+
+    if (firebaseUser) {
+      await saveSettingsToFirestore(newSettings).catch(console.error);
+    }
+  };
+
+  const toggleCalendarDisabled = async (id: string, active: boolean): Promise<void> => {
+    const currentDisabled = new Set(settings.disabledCalendarIds || []);
+    if (active) {
+      currentDisabled.delete(id);
+    } else {
+      currentDisabled.add(id);
+    }
+
+    const saved = settings.savedCalendars || [];
+    const calObj = availableGoogleCalendars.find((c) => c.id === id);
+    const exists = saved.some((c) => c.id === id);
+    const updatedSaved = exists
+      ? saved.map((c) => (c.id === id ? { ...c } : c))
+      : calObj
+      ? [...saved, { ...calObj }]
+      : saved;
+
+    const newSettings: FamilySettings = {
+      ...settings,
+      disabledCalendarIds: Array.from(currentDisabled),
       savedCalendars: updatedSaved,
     };
     setSettings(newSettings);
@@ -1044,7 +1082,9 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       bufferBeforeMinutes: settings.defaultTravelBufferBefore || 40,
       bufferAfterMinutes: settings.defaultTravelBufferAfter || 40,
       assignedMemberId: undefined,
-      enabledForDisplay: !(settings.disabledCalendarIds || []).includes(id),
+      enabledForDisplay:
+        !(settings.calendarViewHiddenIds || []).includes(id) &&
+        !(settings.disabledCalendarIds || []).includes(id),
     };
 
     const updatedConfig: PerCalendarConfig = {
@@ -1074,13 +1114,13 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     currentPrivacyModes[targetId] = updatedConfig.privacyMode;
 
-    const currentDisabled = new Set(settings.disabledCalendarIds || []);
+    const viewHidden = new Set(settings.calendarViewHiddenIds || []);
     if (updatedConfig.enabledForDisplay === false) {
-      currentDisabled.delete(id);
-      currentDisabled.add(targetId);
+      viewHidden.delete(id);
+      viewHidden.add(targetId);
     } else {
-      currentDisabled.delete(id);
-      currentDisabled.delete(targetId);
+      viewHidden.delete(id);
+      viewHidden.delete(targetId);
     }
 
     const targetVehicle =
@@ -1292,7 +1332,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       calendarConfigs: currentCalendarConfigs,
       carCalendarIds: Array.from(currentCarIds),
       calendarPrivacyModes: currentPrivacyModes,
-      disabledCalendarIds: Array.from(currentDisabled),
+      calendarViewHiddenIds: Array.from(viewHidden),
       savedCalendars: updatedSaved,
       googleCalendarConfig:
         settings.googleCalendarConfig?.calendarId === id
@@ -2065,7 +2105,8 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         updateGoogleCalendarConfig,
         addCustomGoogleCalendar,
         updateGoogleCalendarName,
-        toggleCalendarVisibility,
+        toggleCalendarViewVisibility,
+        toggleCalendarDisabled,
         toggleCarCalendar,
         setCalendarPrivacyMode,
         updateCalendarSettings,

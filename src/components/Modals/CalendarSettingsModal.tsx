@@ -105,10 +105,10 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
       'car_id4'
   );
   const [isVisible, setIsVisible] = useState<boolean>(
-    existingConfig?.enabledForDisplay !== undefined
-      ? existingConfig.enabledForDisplay
-      : calendar.enabledForDisplay !== false &&
-        !(settings.disabledCalendarIds || []).includes(calendar.id)
+    !(settings.calendarViewHiddenIds || []).includes(calendar.id) &&
+      (existingConfig?.enabledForDisplay !== undefined
+        ? existingConfig.enabledForDisplay
+        : calendar.enabledForDisplay !== false)
   );
 
   // Blokk 5: Gjentagende aktiviteter & overstyringer (Eneste unntaksmodul)
@@ -311,8 +311,11 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Synlighet for familien
+                  Visning i kalender
                 </label>
+                <p className="text-[11px] text-slate-500 mb-1.5">
+                  Skjuler hendelser i kalendervisningen. Familiebilen påvirkes ikke.
+                </p>
                 <button
                   type="button"
                   id="toggle-visibility-btn"
@@ -326,12 +329,12 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                   {isVisible ? (
                     <>
                       <Eye className="w-4 h-4 text-emerald-600" />
-                      <span>Synlig i kalender</span>
+                      <span>Vis hendelser i kalender</span>
                     </>
                   ) : (
                     <>
                       <EyeOff className="w-4 h-4 text-slate-400" />
-                      <span>Skjult på brukerside</span>
+                      <span>Skjult i kalendervisning</span>
                     </>
                   )}
                 </button>

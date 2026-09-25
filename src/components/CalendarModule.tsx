@@ -35,8 +35,27 @@ import {
   isToday,
 } from '../utils/dateUtils';
 import { CalendarEvent, GoogleCalendarItem } from '../types';
+import { WeekTimeGrid } from './WeekTimeGrid';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
 import { SAMPLE_GOOGLE_CALENDARS } from '../utils/googleCalendarService';
+import {
+  buildCarReservationSpansByDay,
+  FAMILY_CAR_LINE_COLOR,
+  getFamilyCarOccupiedDateKeys,
+} from '../utils/carReservationSpans';
+import {
+  getDisplayEventDescription,
+  getDisplayEventLocation,
+  getDisplayEventTitle,
+  getEventCalendarConfig,
+  isBusyOnlyEvent,
+} from '../utils/calendarEventDisplay';
+import { buildMonthCalendarCells, getWeekDates, getWeekStart } from '../utils/weekCalendarGrid';
+import {
+  isCalendarActiveForCar,
+  isCalendarDisabled,
+  isCalendarVisibleInView,
+} from '../utils/calendarVisibility';
 
 interface CalendarModuleProps {
   onOpenAddEvent?: () => void;
@@ -64,7 +83,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     connectGoogleCalendar,
     disconnectGoogleCalendar,
     availableGoogleCalendars,
-    toggleCalendarVisibility,
+    toggleCalendarViewVisibility,
     updateCalendarSettings,
   } = useFamily();
 
@@ -72,7 +91,6 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedMemberFilter, setSelectedMemberFilter] = useState<string>('all');
-  const [onlyCarReservations, setOnlyCarReservations] = useState<boolean>(false);
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
   const [selectedCalForModal, setSelectedCalForModal] = useState<GoogleCalendarItem | null>(null);
   const [showPastEvents, setShowPastEvents] = useState<boolean>(false);
@@ -101,46 +119,14 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     setSelectedDate(today);
   };
 
-  // Build calendar matrix (Monday-based)
-  const firstDayOfMonth = new Date(year, month, 1);
-  const lastDayOfMonth = new Date(year, month + 1, 0);
-
-  // 0 = Sunday in JS, so convert to Mon=0 ... Sun=6
-  const startDayOfWeek = (firstDayOfMonth.getDay() + 6) % 7;
-  const daysInMonth = lastDayOfMonth.getDate();
-
-  // Previous month trailing days
-  const prevMonthLastDay = new Date(year, month, 0).getDate();
-  const calendarCells: { date: Date; isCurrentMonth: boolean; dateStr: string }[] = [];
-
-  for (let i = startDayOfWeek - 1; i >= 0; i--) {
-    const d = new Date(year, month - 1, prevMonthLastDay - i);
-    calendarCells.push({
-      date: d,
-      isCurrentMonth: false,
-      dateStr: formatLocalDateKey(d),
-    });
-  }
-
-  for (let i = 1; i <= daysInMonth; i++) {
-    const d = new Date(year, month, i);
-    calendarCells.push({
-      date: d,
-      isCurrentMonth: true,
-      dateStr: formatLocalDateKey(d),
-    });
-  }
-
-  // Next month leading days to complete grid (multiples of 7)
-  const remainingCells = 42 - calendarCells.length;
-  for (let i = 1; i <= (remainingCells >= 7 ? remainingCells - 7 : remainingCells); i++) {
-    const d = new Date(year, month + 1, i);
-    calendarCells.push({
-      date: d,
-      isCurrentMonth: false,
-      dateStr: formatLocalDateKey(d),
-    });
-  }
+  const calendarCells = useMemo(
+    () =>
+      buildMonthCalendarCells(year, month).map((cell) => ({
+        ...cell,
+        dateStr: formatLocalDateKey(cell.date),
+      })),
+    [year, month]
+  );
 
   // Filter events according to mock data settings and admin-disabled calendars
   const disabledCalIds = useMemo(
@@ -180,16 +166,16 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
       });
     }
 
-    return Array.from(map.values());
-  }, [availableGoogleCalendars, settings.savedCalendars, deletedCalIds, settings.disableMockData]);
+    return Array.from(map.values()).filter(
+      (cal) => !isCalendarDisabled(cal.id, settings, Array.from(deletedCalIds))
+    );
+  }, [availableGoogleCalendars, settings.savedCalendars, deletedCalIds, settings.disableMockData, settings.disabledCalendarIds]);
 
-  // Check if a calendar is currently visible
-  const isCalendarVisible = (calId: string, calItem?: GoogleCalendarItem) => {
-    if (disabledCalIds.has(calId)) return false;
-    if (settings.calendarConfigs?.[calId]?.enabledForDisplay === false) return false;
-    if (calItem && calItem.enabledForDisplay === false) return false;
-    return true;
-  };
+  const isCalendarVisible = (calId: string, calItem?: GoogleCalendarItem) =>
+    isCalendarVisibleInView(calId, settings, calItem, Array.from(deletedCalIds));
+
+  const isCalendarActiveForCarCheck = (calId: string) =>
+    isCalendarActiveForCar(calId, settings, Array.from(deletedCalIds));
 
   // Get the person associated with a calendar
   const getCalendarOwner = (cal: GoogleCalendarItem) => {
@@ -225,6 +211,15 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
 
   const visibleCalendarsCount = allCalendars.filter((c) => isCalendarVisible(c.id, c)).length;
 
+  const onlyCarReservations = settings.calendarShowOnlyCarReservations === true;
+
+  const eventReservesCar = (ev: CalendarEvent): boolean => {
+    if (ev.createsCarReservation) return true;
+    return reservations.some(
+      (res) => res.status !== 'cancelled' && res.calendarEventId === ev.id
+    );
+  };
+
   const filteredEvents = calendarEvents.filter((ev) => {
     if (
       settings.disableMockData &&
@@ -249,7 +244,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     if (selectedMemberFilter !== 'all' && ev.memberId !== selectedMemberFilter) {
       return false;
     }
-    if (onlyCarReservations && !ev.createsCarReservation) {
+    if (onlyCarReservations && !eventReservesCar(ev)) {
       return false;
     }
     return true;
@@ -257,6 +252,62 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
 
   const sortedEvents = [...filteredEvents].sort(
     (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+  );
+
+  const showFamilyCarLine = settings.showFamilyCarLine !== false;
+
+  const carSpanSourceEvents = useMemo(
+    () =>
+      calendarEvents.filter((ev) => {
+        if (
+          settings.disableMockData &&
+          (ev.id === 'cal_ev_1' ||
+            ev.id === 'cal_ev_2' ||
+            ev.id.startsWith('mock_') ||
+            (ev as { isMock?: boolean }).isMock)
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [calendarEvents, settings.disableMockData]
+  );
+
+  const weekStart = useMemo(() => getWeekStart(currentDate), [currentDate]);
+  const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+
+  const carSpansByDay = useMemo(
+    () =>
+      buildCarReservationSpansByDay(
+        carSpanSourceEvents,
+        settings,
+        allCalendars,
+        weekDates,
+        (calId) => isCalendarActiveForCarCheck(calId)
+      ),
+    [carSpanSourceEvents, settings, allCalendars, weekDates, disabledCalIds, settings.calendarViewHiddenIds]
+  );
+
+  const monthCarOccupiedDateKeys = useMemo(
+    () =>
+      showFamilyCarLine
+        ? getFamilyCarOccupiedDateKeys(
+            carSpanSourceEvents,
+            settings,
+            allCalendars,
+            calendarCells.map((cell) => cell.date),
+            (calId) => isCalendarActiveForCarCheck(calId)
+          )
+        : new Set<string>(),
+    [
+      showFamilyCarLine,
+      carSpanSourceEvents,
+      settings,
+      allCalendars,
+      calendarCells,
+      disabledCalIds,
+      settings.calendarViewHiddenIds,
+    ]
   );
 
   // Helper to determine if an event is in the future or active/ongoing
@@ -291,6 +342,14 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     isSameDay(ev.startTime, selectedDate)
   );
 
+  const getEventCalendarColor = (event: CalendarEvent): string => {
+    const calId = event.calendarId || event.googleCalendarId;
+    if (!calId) return '#0284c7';
+    const cal = allCalendars.find((c) => c.id === calId);
+    const configColor = settings.calendarConfigs?.[calId]?.color;
+    return configColor || cal?.backgroundColor || '#0284c7';
+  };
+
   // Manual or instant 2-way sync trigger
   const handleTriggerSync = async () => {
     const res = await syncTwoWayWithGoogle();
@@ -301,7 +360,13 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
   };
 
   return (
-    <div className="space-y-6 pb-20 md:pb-8">
+    <div
+      className={
+        viewMode === 'week'
+          ? 'flex flex-col gap-3 h-full min-h-0 overflow-hidden'
+          : 'h-full min-h-0 overflow-y-auto space-y-6 pb-8'
+      }
+    >
       {/* Toast Feedback */}
       {feedbackToast && (
         <div className="fixed top-5 right-5 z-50 bg-emerald-900/90 text-emerald-100 px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md border border-emerald-500/40 text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-3">
@@ -311,7 +376,11 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
       )}
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 backdrop-blur-md bg-white/60 p-6 sm:p-7 rounded-3xl border border-white/60 shadow-sm">
+      <div
+        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 backdrop-blur-md bg-white/60 rounded-3xl border border-white/60 shadow-sm shrink-0 ${
+          viewMode === 'week' ? 'p-3 sm:p-4' : 'p-6 sm:p-7'
+        }`}
+      >
         <div className="flex items-center space-x-4">
           <div className="w-13 h-13 bg-sky-100/80 text-sky-800 rounded-2xl flex items-center justify-center border border-sky-200/60 shadow-2xs">
             <Calendar className="w-7 h-7" />
@@ -356,7 +425,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
       </div>
 
       {/* View Switcher & Member Filters */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         {/* View Mode buttons */}
         <div className="flex items-center p-1 bg-white/60 backdrop-blur-md rounded-2xl border border-white/60 shadow-2xs w-fit">
           <button
@@ -417,6 +486,21 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
               <span>{m.name}</span>
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() =>
+              updateSettings({ calendarShowOnlyCarReservations: !onlyCarReservations })
+            }
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer shadow-2xs ${
+              onlyCarReservations
+                ? 'bg-amber-500 text-white'
+                : 'bg-white/60 text-slate-700 hover:bg-white/90 border border-white/60'
+            }`}
+            title="Vis kun hendelser som reserverer bilen"
+          >
+            <Car className="w-3.5 h-3.5" />
+            <span>Kun bilreservasjoner</span>
+          </button>
         </div>
       </div>
 
@@ -477,7 +561,8 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                 const dayEvents = sortedEvents.filter(
                   (e) => isSameDay(e.startTime, cell.date)
                 );
-                const hasCarRes = dayEvents.some((e) => e.createsCarReservation);
+                const hasFamilyCarOccupied =
+                  showFamilyCarLine && monthCarOccupiedDateKeys.has(cell.dateStr);
                 const isSelected = isSameDay(cell.date, selectedDate);
                 const isCurrentToday = isToday(cell.date);
 
@@ -508,39 +593,45 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                         {cell.date.getDate()}
                       </span>
 
-                      {hasCarRes && (
-                        <span title="Bil reservert denne dagen">
-                          <Car className="w-3.5 h-3.5 text-emerald-600" />
+                      {hasFamilyCarOccupied && (
+                        <span title="Familiebilen opptatt denne dagen (inkl. reisetid)">
+                          <Car className="w-3.5 h-3.5 text-amber-600" />
                         </span>
                       )}
                     </div>
 
                     {/* Event pills in month cell */}
                     <div className="space-y-1 mt-1 overflow-hidden">
-                      {dayEvents.slice(0, 2).map((ev) => (
+                      {dayEvents.slice(0, 2).map((ev) => {
+                        const evConfig = getEventCalendarConfig(ev, settings.calendarConfigs);
+                        const displayTitle = getDisplayEventTitle(ev, evConfig);
+                        const busyOnly = isBusyOnlyEvent(ev, evConfig);
+
+                        return (
                         <div
                           key={ev.id}
                           className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium flex items-center justify-between ${
-                            ev.isConfidential
+                            busyOnly
                               ? 'bg-amber-100/90 text-amber-900 border border-amber-300/80 font-bold'
                               : ev.isWorkRelated
                               ? 'bg-indigo-100/90 text-indigo-900 border border-indigo-200/60'
                               : 'bg-sky-100/80 text-sky-900 border border-sky-200/60'
                           }`}
-                          title={ev.isConfidential ? `${ev.memberName}: Opptatt (Konfidensielt)` : `${ev.memberName}: ${ev.title}`}
+                          title={busyOnly ? `${ev.memberName}: Opptatt (Konfidensielt)` : `${ev.memberName}: ${displayTitle}`}
                         >
                           <span className="truncate flex items-center gap-1">
                             {(ev.createsCarReservation || ev.vehicleReservationId) && (
                               <Car className="w-2.5 h-2.5 text-blue-700 shrink-0" title="Reserverer bil" />
                             )}
-                            {ev.isConfidential && <Lock className="w-2.5 h-2.5 text-amber-700 shrink-0" />}
-                            <span>{ev.title}</span>
+                            {busyOnly && <Lock className="w-2.5 h-2.5 text-amber-700 shrink-0" />}
+                            <span>{displayTitle}</span>
                           </span>
                           {ev.isSyncedWithGoogle && (
                             <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1 shrink-0" />
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
 
                       {dayEvents.length > 2 && (
                         <div className="text-[9px] text-slate-500 font-bold text-right pr-1">
@@ -572,7 +663,13 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
               {/* Event list for selected date */}
               <div className="space-y-3">
                 {selectedDateEvents.length > 0 ? (
-                  selectedDateEvents.map((ev) => (
+                  selectedDateEvents.map((ev) => {
+                    const evConfig = getEventCalendarConfig(ev, settings.calendarConfigs);
+                    const displayTitle = getDisplayEventTitle(ev, evConfig);
+                    const displayLocation = getDisplayEventLocation(ev, evConfig);
+                    const busyOnly = isBusyOnlyEvent(ev, evConfig);
+
+                    return (
                     <div
                       key={ev.id}
                       className="p-4 rounded-2xl bg-white/70 backdrop-blur-xs border border-white/80 shadow-2xs space-y-2"
@@ -589,13 +686,13 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                                 Bil reservert
                               </span>
                             )}
-                            {ev.isConfidential && (
+                            {busyOnly && (
                               <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
                                 <Lock className="w-2.5 h-2.5 text-amber-700" />
                                 Konfidensielt
                               </span>
                             )}
-                            {ev.isWorkRelated && !ev.isConfidential && (
+                            {ev.isWorkRelated && !busyOnly && (
                               <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
                                 Jobb
                               </span>
@@ -608,7 +705,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                             )}
                           </div>
                           <h4 className="font-bold text-slate-900 text-sm mt-0.5">
-                            {ev.title}
+                            {displayTitle}
                           </h4>
                         </div>
 
@@ -629,10 +726,10 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                           </span>
                         </div>
 
-                        {ev.location && (
+                        {displayLocation && (
                           <div className="flex items-center gap-1.5">
                             <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{ev.location}</span>
+                            <span>{displayLocation}</span>
                           </div>
                         )}
                       </div>
@@ -663,7 +760,8 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                         </a>
                       )}
                     </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="py-8 text-center text-xs text-slate-400">
                     <p>Ingen hendelser på denne datoen.</p>
@@ -695,6 +793,59 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
 
               {/* Calendars List */}
               <div className="space-y-2">
+                <div
+                  className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                    showFamilyCarLine
+                      ? 'bg-amber-50/80 border-amber-200/80 shadow-2xs'
+                      : 'bg-slate-50/50 border-slate-200/40 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div
+                      className="w-3.5 h-3.5 rounded-full shrink-0 border border-black/10 shadow-2xs"
+                      style={{ backgroundColor: FAMILY_CAR_LINE_COLOR }}
+                      title={`Fargekode: ${FAMILY_CAR_LINE_COLOR}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h4 className="text-xs font-bold text-slate-900 truncate">Familiebilen</h4>
+                        <span
+                          className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-200 flex items-center gap-0.5 shrink-0"
+                          title="Avledet lag – ikke en egen kalender"
+                        >
+                          <Car className="w-2.5 h-2.5 text-amber-800" />
+                          <span>Opptatt</span>
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                        Sum av alle avtaler som sperrer bilen, pluss reisetid
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showFamilyCarLine}
+                    onClick={() => updateSettings({ showFamilyCarLine: !showFamilyCarLine })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                      showFamilyCarLine ? 'bg-amber-500' : 'bg-slate-300'
+                    }`}
+                    title={
+                      showFamilyCarLine
+                        ? 'Klikk for å skjule bilstreken i ukevisning'
+                        : 'Klikk for å vise bilstreken i ukevisning'
+                    }
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                        showFamilyCarLine ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
                 {allCalendars.length > 0 ? (
                   allCalendars.map((cal) => {
                     const isVisible = isCalendarVisible(cal.id, cal);
@@ -786,11 +937,15 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                             type="button"
                             role="switch"
                             aria-checked={isVisible}
-                            onClick={() => toggleCalendarVisibility(cal.id, !isVisible)}
+                            onClick={() => toggleCalendarViewVisibility(cal.id, !isVisible)}
                             className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
                               isVisible ? 'bg-sky-600' : 'bg-slate-300'
                             }`}
-                            title={isVisible ? 'Klikk for å skjule kalender' : 'Klikk for å vise kalender'}
+                            title={
+                              isVisible
+                                ? 'Skjul hendelser i kalendervisning. Familiebilen påvirkes ikke.'
+                                : 'Vis hendelser i kalendervisning'
+                            }
                           >
                             <span
                               aria-hidden="true"
@@ -814,89 +969,18 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
         </div>
       )}
 
-      {/* MAIN VIEW: Week Schedule */}
       {viewMode === 'week' && (
-        <div className="backdrop-blur-md bg-white/60 rounded-3xl p-6 border border-white/60 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-200/50">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">Ukeoversikt</h2>
-              <p className="text-xs text-slate-500">Alle avtaler og bilreserveringer dag for dag</p>
-            </div>
-            <button
-              onClick={goToToday}
-              className="px-3 py-1 text-xs font-bold bg-white/80 text-slate-700 rounded-xl border border-slate-200/60 shadow-2xs"
-            >
-              Gå til i dag
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
-            {dayNamesShort.map((dayName, dayIdx) => {
-              // Get date for this weekday of current week
-              const today = new Date();
-              const currentDayOfWeek = (today.getDay() + 6) % 7; // Mon=0
-              const targetDayDate = new Date(today);
-              targetDayDate.setDate(today.getDate() - currentDayOfWeek + dayIdx);
-              const dayEvents = sortedEvents.filter(
-                (e) => isSameDay(e.startTime, targetDayDate)
-              );
-
-              return (
-                <div
-                  key={dayName}
-                  className="p-3.5 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs space-y-3 min-h-[220px]"
-                >
-                  <div className="border-b border-slate-200/40 pb-2">
-                    <span className="text-xs font-bold text-slate-500 block uppercase">
-                      {dayName}
-                    </span>
-                    <span className="text-sm font-extrabold text-slate-900">
-                      {targetDayDate.getDate()}. {monthNames[targetDayDate.getMonth()].slice(0, 3)}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    {dayEvents.length > 0 ? (
-                      dayEvents.map((ev) => (
-                        <div
-                          key={ev.id}
-                          className={`p-2.5 rounded-xl border shadow-2xs text-xs space-y-1 ${
-                            ev.isConfidential
-                              ? 'bg-amber-50/90 border-amber-200'
-                              : 'bg-white/80 border-white/80'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-slate-900 truncate flex items-center gap-1">
-                              {ev.isConfidential && <Lock className="w-2.5 h-2.5 text-amber-700 shrink-0" />}
-                              <span>{ev.title}</span>
-                            </span>
-                            <span className="text-[10px] font-semibold text-slate-500">
-                              {ev.memberName}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-sky-950 font-medium">
-                            {formatTimeRange(ev.startTime, ev.endTime)}
-                          </div>
-                          {ev.createsCarReservation && (
-                            <div className="text-[10px] text-emerald-800 font-semibold flex items-center gap-1">
-                              <Car className="w-3 h-3 text-emerald-600" />
-                              <span>Bil reservert</span>
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <span className="text-[11px] text-slate-400 block pt-2">
-                        Ingen hendelser
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <WeekTimeGrid
+          events={sortedEvents}
+          weekAnchor={currentDate}
+          onWeekChange={setCurrentDate}
+          onGoToToday={goToToday}
+          getEventColor={getEventCalendarColor}
+          dayNamesShort={dayNamesShort}
+          monthNames={monthNames}
+          carSpansByDay={carSpansByDay}
+          showFamilyCarLine={showFamilyCarLine}
+        />
       )}
 
       {/* MAIN VIEW: Agenda / List */}
@@ -934,7 +1018,14 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
 
           <div className="divide-y divide-slate-200/40">
             {displayedAgendaEvents.length > 0 ? (
-              displayedAgendaEvents.map((ev) => (
+              displayedAgendaEvents.map((ev) => {
+                const evConfig = getEventCalendarConfig(ev, settings.calendarConfigs);
+                const displayTitle = getDisplayEventTitle(ev, evConfig);
+                const displayLocation = getDisplayEventLocation(ev, evConfig);
+                const displayDescription = getDisplayEventDescription(ev, evConfig);
+                const busyOnly = isBusyOnlyEvent(ev, evConfig);
+
+                return (
                 <div
                   key={ev.id}
                   className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
@@ -948,19 +1039,19 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                         {formatTimeRange(ev.startTime, ev.endTime)}
                       </span>
                       <span className="text-xs font-semibold text-slate-900">{ev.memberName}</span>
-                      {ev.isConfidential && (
+                      {busyOnly && (
                         <span className="text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md flex items-center gap-1">
                           <Lock className="w-2.5 h-2.5 text-amber-700" />
                           Konfidensielt
                         </span>
                       )}
-                      {ev.location && (
+                      {displayLocation && (
                         <span className="inline-flex items-center gap-0.5 text-xs text-slate-600 font-medium">
                           <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                          {ev.location}
+                          {displayLocation}
                         </span>
                       )}
-                      {ev.isWorkRelated && !ev.isConfidential && (
+                      {ev.isWorkRelated && !busyOnly && (
                         <span className="text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200/60 px-2 py-0.5 rounded-md">
                           Jobb
                         </span>
@@ -973,9 +1064,9 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                       )}
                     </div>
 
-                    <p className="text-sm font-bold text-slate-800">{ev.title}</p>
-                    {ev.description && (
-                      <p className="text-xs text-slate-600">{ev.description}</p>
+                    <p className="text-sm font-bold text-slate-800">{displayTitle}</p>
+                    {displayDescription && (
+                      <p className="text-xs text-slate-600">{displayDescription}</p>
                     )}
 
                     {ev.createsCarReservation && (
@@ -1010,7 +1101,8 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                     </button>
                   </div>
                 </div>
-              ))
+                );
+              })
             ) : (
               <div className="py-12 text-center text-sm text-slate-500 space-y-2">
                 <p className="font-semibold text-slate-700">Ingen fremtidige kalenderhendelser funnet</p>

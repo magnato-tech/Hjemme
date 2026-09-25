@@ -36,6 +36,7 @@ import {
 } from './Icons';
 import { Role, HouseArea, TaskTemplate, RecurrenceType, GoogleCalendarItem } from '../types';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
+import { isCalendarDisabled } from '../utils/calendarVisibility';
 
 export const AdminSettings: React.FC = () => {
   const {
@@ -75,7 +76,7 @@ export const AdminSettings: React.FC = () => {
     updateGoogleCalendarConfig,
     addCustomGoogleCalendar,
     updateGoogleCalendarName,
-    toggleCalendarVisibility,
+    toggleCalendarDisabled,
     removeCustomGoogleCalendar,
     clearAllMockData,
     toggleDisableMockData,
@@ -345,7 +346,7 @@ export const AdminSettings: React.FC = () => {
           { id: 'areas', label: '2. Husstruktur & Områder', icon: Home },
           { id: 'tasks', label: '3. Oppgavebibliotek', icon: Sparkles },
           { id: 'car', label: '4. Biler & Bilregler', icon: Car },
-          { id: 'calendar', label: '5. Kalender & Reisetid', icon: Calendar },
+          { id: 'calendar', label: '5. Kalender', icon: Calendar },
           { id: 'firestore', label: '6. Firestore Skydatabase', icon: Cloud },
           { id: 'system', label: '7. System / Demo', icon: RotateCw },
         ].map((tab) => {
@@ -1248,6 +1249,46 @@ export const AdminSettings: React.FC = () => {
               </div>
             </div>
 
+            {/* Kalendervisning: kun bilreservasjoner */}
+            <div className="p-4 rounded-2xl bg-white/90 border border-slate-200/90 shadow-xs space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <Car className="w-4 h-4 text-amber-600" />
+                    <span>Kalendervisning</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    Vis kun aktiviteter som reserverer bilen i måned-, uke- og listevisning. Gir en
+                    ryddigere oversikt over bilbruk.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateSettings({
+                      calendarShowOnlyCarReservations: !settings.calendarShowOnlyCarReservations,
+                    })
+                  }
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border shrink-0 flex items-center gap-2 cursor-pointer ${
+                    settings.calendarShowOnlyCarReservations
+                      ? 'bg-amber-50 border-amber-300 text-amber-900'
+                      : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <Car
+                    className={`w-3.5 h-3.5 ${
+                      settings.calendarShowOnlyCarReservations ? 'text-amber-700' : 'text-slate-400'
+                    }`}
+                  />
+                  <span>
+                    {settings.calendarShowOnlyCarReservations
+                      ? 'Kun bilreservasjoner: PÅ'
+                      : 'Kun bilreservasjoner: AV'}
+                  </span>
+                </button>
+              </div>
+            </div>
+
             {/* TILKOBLEDE KALENDERE */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1256,7 +1297,7 @@ export const AdminSettings: React.FC = () => {
                     Tilkoblede kalendere
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Oversikt over familiens kalendere. Trykk på <strong>«Innstillinger»</strong> på en kalender for å styre bilsperre, unntak og reisetidsbuffer, eller bruk <strong>«Synlig»</strong>-knappen for å vise/skjule i kalendervisningen.
+                    Oversikt over familiens kalendere. Trykk på <strong>«Innstillinger»</strong> for bilsperre og buffer. Bruk <strong>«Deaktiver»</strong> for å fjerne kalenderen fra Familiekalender og Familiebilen. Visuell skjuling gjøres på kalendersiden.
                   </p>
                 </div>
 
@@ -1298,10 +1339,7 @@ export const AdminSettings: React.FC = () => {
                           : 'all'
                         : 'none');
                     const isCarActive = carMode !== 'none';
-                    const isVisible =
-                      perCal?.enabledForDisplay !== false &&
-                      cal.enabledForDisplay !== false &&
-                      !(settings.disabledCalendarIds || []).includes(cal.id);
+                    const isActive = !isCalendarDisabled(cal.id, settings);
                     const isEditing = editingCalId === cal.id;
                     const displayName = perCal?.customName || cal.customName || cal.summary;
                     const privacyMode =
@@ -1336,7 +1374,7 @@ export const AdminSettings: React.FC = () => {
                         className={`p-4 sm:p-5 rounded-2xl border transition-all ${
                           isCarActive
                             ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-500/20 shadow-xs'
-                            : isVisible
+                            : isActive
                             ? 'bg-white/80 hover:bg-white border-slate-200/90 shadow-2xs'
                             : 'bg-slate-50/70 border-slate-200/60 opacity-80'
                         }`}
@@ -1435,26 +1473,30 @@ export const AdminSettings: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  toggleCalendarVisibility(cal.id, !isVisible);
+                                  toggleCalendarDisabled(cal.id, !isActive);
                                   showNotification(
-                                    !isVisible
-                                      ? `👁️ «${displayName}» vises nå i kalenderen for familien`
-                                      : `🙈 «${displayName}» er nå skjult på brukersiden`
+                                    !isActive
+                                      ? `✅ «${displayName}» er aktivert og vises i Familiekalender`
+                                      : `⏸️ «${displayName}» er deaktivert og fjernes fra Familiekalender og Familiebilen`
                                   );
                                 }}
                                 className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border shadow-2xs cursor-pointer ${
-                                  isVisible
+                                  isActive
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
                                     : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
                                 }`}
-                                title={isVisible ? 'Klikk for å skjule' : 'Klikk for å vise'}
+                                title={
+                                  isActive
+                                    ? 'Deaktiver kalenderen (fjernes fra Familiekalender og Familiebilen)'
+                                    : 'Aktiver kalenderen igjen'
+                                }
                               >
-                                {isVisible ? (
+                                {isActive ? (
                                   <Eye className="w-3.5 h-3.5 text-emerald-600" />
                                 ) : (
                                   <EyeOff className="w-3.5 h-3.5 text-slate-400" />
                                 )}
-                                <span>{isVisible ? 'Synlig' : 'Skjult'}</span>
+                                <span>{isActive ? 'Deaktiver' : 'Aktiver'}</span>
                               </button>
 
                               <button

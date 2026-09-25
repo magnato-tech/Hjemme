@@ -157,11 +157,11 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
 
               {/* Member Selector */}
-              <div className="flex items-center bg-white/50 backdrop-blur-sm p-1 rounded-2xl border border-white/60 shadow-2xs">
-                <span className="text-xs text-slate-400 font-medium px-2 hidden lg:inline">
+              <div className="flex items-center bg-slate-100/95 backdrop-blur-sm p-1 rounded-2xl border border-slate-200/90 shadow-sm">
+                <span className="text-xs text-slate-600 font-semibold px-2 hidden lg:inline">
                   Viser som:
                 </span>
-                <div className="flex space-x-1">
+                <div className="flex gap-1">
                   {members.map((m) => {
                     const isCurrent = m.id === activeMember.id;
                     return (
@@ -169,13 +169,14 @@ export const Header: React.FC<HeaderProps> = ({
                         key={m.id}
                         onClick={() => setActiveMemberId(m.id)}
                         title={`Bytt til ${m.name} (${m.role === 'admin' ? 'Admin' : m.role === 'adult' ? 'Voksen' : 'Barn/Ungdom'})`}
-                        className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold transition-all ${
+                        aria-pressed={isCurrent}
+                        className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                           isCurrent
-                            ? 'bg-white text-slate-900 shadow-xs border border-white/80 ring-1 ring-slate-900/5'
-                            : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                            ? 'bg-slate-900 text-white shadow-md ring-2 ring-indigo-400/50'
+                            : 'text-slate-500 hover:text-slate-800 hover:bg-white/90 border border-transparent'
                         }`}
                       >
-                        <span>{m.avatarEmoji}</span>
+                        <span className={isCurrent ? 'opacity-100' : 'opacity-70'}>{m.avatarEmoji}</span>
                         <span className="truncate max-w-[65px] sm:max-w-none">{m.name}</span>
                       </button>
                     );

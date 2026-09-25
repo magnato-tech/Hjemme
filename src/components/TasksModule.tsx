@@ -17,6 +17,7 @@ import {
   ArrowRight,
 } from './Icons';
 import { TaskInstance, TaskTemplate } from '../types';
+import { getMemberPointsProgress, getSmartTaskSuggestions } from '../utils/taskUtils';
 
 interface TasksModuleProps {
   onOpenCreateTask: () => void;
@@ -45,10 +46,9 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
 
   const completedPoints = getMemberCompletedPoints(activeMember.id);
   const claimedPoints = getMemberClaimedPoints(activeMember.id);
-  const remainingPoints = Math.max(0, activeMember.weeklyPointsGoal - completedPoints);
-  const progressPercent = Math.min(
-    100,
-    Math.round((completedPoints / (activeMember.weeklyPointsGoal || 1)) * 100)
+  const { remainingPoints, progressPercent } = getMemberPointsProgress(
+    completedPoints,
+    activeMember.weeklyPointsGoal
   );
 
   // Filter tasks for current week
@@ -64,26 +64,7 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
 
   const availableTasks = currentWeekInstances.filter((t) => t.status === 'available');
 
-  // Smart Recommender
-  const getSmartSuggestions = () => {
-    if (remainingPoints <= 0 || availableTasks.length === 0) return [];
-    const sorted = [...availableTasks].sort((a, b) => b.points - a.points);
-    let accum = 0;
-    const chosen: TaskInstance[] = [];
-
-    for (const t of sorted) {
-      if (accum + t.points <= remainingPoints) {
-        chosen.push(t);
-        accum += t.points;
-      }
-    }
-    if (chosen.length === 0 && availableTasks.length > 0) {
-      return [availableTasks[0]];
-    }
-    return chosen;
-  };
-
-  const suggested = getSmartSuggestions();
+  const suggested = getSmartTaskSuggestions(availableTasks, remainingPoints);
   const suggestedTotal = suggested.reduce((s, t) => s + t.points, 0);
 
   const handleStartEditTemplate = (tmpl: TaskTemplate) => {

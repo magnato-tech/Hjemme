@@ -233,5 +233,11 @@ export interface FamilySettings {
   disableMockData?: boolean;
   savedCalendars?: GoogleCalendarItem[];
   disabledCalendarIds?: string[];
+  /** Skjult kun i kalendervisning; teller fortsatt for Familiebilen */
+  calendarViewHiddenIds?: string[];
   deletedCalendarIds?: string[]; // permanently removed calendars
+  /** When true, calendar views only show events/activities that reserve the car */
+  calendarShowOnlyCarReservations?: boolean;
+  /** When true (default), show the derived family-car occupancy line in week view */
+  showFamilyCarLine?: boolean;
 }
