@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useFamily } from '../../context/FamilyContext';
-import { RecurrenceType } from '../../types';
+import { TASK_WEEKDAY_OPTIONS } from '../../utils/taskUtils';
 import { X, Sparkles, TaskIcon } from '../Icons';
 
 interface CreateTaskModalProps {
@@ -28,8 +28,8 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClos
   const [area, setArea] = useState(() => areas[0]?.name || '1. etasje');
   const [room, setRoom] = useState(() => areas[0]?.rooms[0] || 'Kjøkken');
   const [points, setPoints] = useState(2);
-  const [recurrence, setRecurrence] = useState<RecurrenceType>('weekly');
-  const [deadlineDay, setDeadlineDay] = useState('Søndag 20:00');
+  const [intervalDays, setIntervalDays] = useState(7);
+  const [fixedWeekday, setFixedWeekday] = useState<number | null>(null);
   const [isMandatory, setIsMandatory] = useState(false);
   const [iconName, setIconName] = useState('brush');
   const [eligibleMembers, setEligibleMembers] = useState<string[]>(members.map((m) => m.id));
@@ -56,8 +56,8 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClos
       area,
       room,
       points: Number(points) || 1,
-      recurrence,
-      deadlineDay,
+      intervalDays: Number(intervalDays) || 0,
+      fixedWeekday,
       eligibleMemberIds: eligibleMembers,
       isActive: true,
       isMandatory,
@@ -106,7 +106,7 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClos
             />
           </div>
 
-          {/* Points & Recurrence */}
+          {/* Points & Interval */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
@@ -132,19 +132,17 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClos
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                Gjentakelse
+                Antall dager
               </label>
-              <select
-                value={recurrence}
-                onChange={(e) => setRecurrence(e.target.value as RecurrenceType)}
+              <input
+                type="number"
+                min="0"
+                max="365"
+                value={intervalDays}
+                onChange={(e) => setIntervalDays(Number(e.target.value))}
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 text-slate-800 text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500 bg-white/70 backdrop-blur-xs shadow-2xs"
-              >
-                <option value="weekly">Hver uke (Automatisk)</option>
-                <option value="biweekly">Hver 2. uke</option>
-                <option value="monthly">Månedlig</option>
-                <option value="daily">Daglig / Løpende</option>
-                <option value="once">Engangsoppgave</option>
-              </select>
+              />
+              <p className="text-[10px] text-slate-400 mt-1">0 = engangsoppgave</p>
             </div>
           </div>
 
@@ -198,13 +196,20 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClos
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Frist
               </label>
-              <input
-                type="text"
-                value={deadlineDay}
-                onChange={(e) => setDeadlineDay(e.target.value)}
-                placeholder="F.eks. Søndag 20:00"
+              <select
+                value={fixedWeekday === null ? '' : String(fixedWeekday)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFixedWeekday(val === '' ? null : Number(val));
+                }}
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 text-slate-800 text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500 bg-white/70 backdrop-blur-xs shadow-2xs"
-              />
+              >
+                {TASK_WEEKDAY_OPTIONS.map((opt) => (
+                  <option key={opt.label} value={opt.value === null ? '' : String(opt.value)}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>

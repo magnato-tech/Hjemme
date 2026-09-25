@@ -57,7 +57,7 @@ function MainApp() {
         )}
 
         {activeTab === 'tasks' && (
-          <TasksModule onOpenCreateTask={() => setIsCreateTaskOpen(true)} />
+          <TasksModule />
         )}
 
         {activeTab === 'calendar' && (

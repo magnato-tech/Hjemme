@@ -46,6 +46,64 @@ export function getWeekNumber(d: Date = new Date()): number {
   return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
 }
 
+/** Poenguken starter mandag kl. 06:00 (lokal tid). */
+export const POINTS_WEEK_START_DAY = 1; // Monday
+export const POINTS_WEEK_RESET_HOUR = 6;
+
+/** Returnerer mandag kl. 06:00 for inneværende poenguke. */
+export function getPointsWeekStart(now: Date = new Date()): Date {
+  const d = new Date(now);
+  const daysSinceMonday = (d.getDay() + 6) % 7;
+  const weekStart = new Date(d);
+  weekStart.setDate(d.getDate() - daysSinceMonday);
+  weekStart.setHours(POINTS_WEEK_RESET_HOUR, 0, 0, 0);
+
+  if (weekStart > now) {
+    weekStart.setDate(weekStart.getDate() - 7);
+  }
+
+  return weekStart;
+}
+
+export function getPointsWeekEnd(now: Date = new Date()): Date {
+  const end = new Date(getPointsWeekStart(now));
+  end.setDate(end.getDate() + 7);
+  return end;
+}
+
+export function isInCurrentPointsWeek(
+  isoDate: string | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!isoDate) return false;
+  const timestamp = new Date(isoDate);
+  if (Number.isNaN(timestamp.getTime())) return false;
+  const start = getPointsWeekStart(now);
+  const end = getPointsWeekEnd(now);
+  return timestamp >= start && timestamp < end;
+}
+
+/** Sjekker om et tidspunkt faller innen en gitt poenguke (start mandag 06:00). */
+export function isInPointsWeek(isoDate: string | undefined, weekStart: Date): boolean {
+  if (!isoDate) return false;
+  const timestamp = new Date(isoDate);
+  if (Number.isNaN(timestamp.getTime())) return false;
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 7);
+  return timestamp >= weekStart && timestamp < end;
+}
+
+export function getPointsWeekKey(now: Date = new Date()): string {
+  return formatLocalDateKey(getPointsWeekStart(now));
+}
+
+/** 0 = inneværende poenguke, 1 = forrige uke, osv. */
+export function getPointsWeekStartOffset(weeksAgo: number, now: Date = new Date()): Date {
+  const start = getPointsWeekStart(now);
+  start.setDate(start.getDate() - weeksAgo * 7);
+  return start;
+}
+
 export function formatNorwegianDate(dateStr: string | Date): string {
   const d = parseLocalDate(dateStr);
   if (isNaN(d.getTime())) return String(dateStr);

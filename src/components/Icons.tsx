@@ -59,6 +59,7 @@ import {
   UserPlus,
   Lock,
   Unlock,
+  Crown,
 } from 'lucide-react';
 
 export const TaskIcon: React.FC<{ name: string; className?: string }> = ({ name, className = 'w-5 h-5' }) => {
@@ -149,4 +150,5 @@ export {
   UserPlus,
   Lock,
   Unlock,
+  Crown,
 };

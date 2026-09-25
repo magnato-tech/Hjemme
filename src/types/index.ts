@@ -85,8 +85,6 @@ export interface CalendarConnection {
   autoSync?: boolean;
 }
 
-export type RecurrenceType = 'weekly' | 'biweekly' | 'monthly' | 'daily' | 'once';
-
 export interface TaskTemplate {
   id: string;
   title: string;
@@ -94,8 +92,10 @@ export interface TaskTemplate {
   area: string; // '1. etasje' | '2. etasje' | 'Kjeller' | 'Ute' | 'Hele huset' etc.
   room: string; // 'Kjøkken' | 'Bad' | 'Stue' | 'Gang' | 'Vaskerom' | 'Soverom' | 'Hage' etc.
   points: number;
-  recurrence: RecurrenceType;
-  deadlineDay: string; // e.g. 'Søndag 20:00'
+  /** Dager mellom fullføringer. 0 = engangsoppgave. */
+  intervalDays: number;
+  /** 0=søndag … 6=lørdag (Date.getDay()). null = rullerende frist etter intervalDays. */
+  fixedWeekday: number | null;
   eligibleMemberIds: string[]; // empty means all
   isActive: boolean;
   isMandatory: boolean;
@@ -121,7 +121,7 @@ export interface TaskInstance {
   completedAt?: string;
   completedByMemberId?: string;
   completedByName?: string;
-  deadlineDate: string; // ISO date string or formatted deadline
+  deadlineDate: string; // ISO datetime, frist kl. 23:59:59
   iconName: string;
   isMandatory: boolean;
 }
@@ -215,6 +215,21 @@ export interface GoogleCalendarConfig {
   lastSyncedAt?: string;
 }
 
+/** Lagret poengresultat for én medlem × én poenguke (mandag 06:00). */
+export interface MemberWeeklyPointsRecord {
+  id: string;
+  memberId: string;
+  weekStart: string;
+  weekEnd: string;
+  weekNumber: number;
+  year: number;
+  completedPoints: number;
+  claimedPoints: number;
+  weeklyPointsGoal: number;
+  goalMet: boolean;
+  finalizedAt: string;
+}
+
 export interface FamilySettings {
   familyName: string;
   carPriorityRule: string; // e.g. 'Magnars jobbrelaterte kalenderhendelser reserverer bilen automatisk'
@@ -240,4 +255,6 @@ export interface FamilySettings {
   calendarShowOnlyCarReservations?: boolean;
   /** When true (default), show the derived family-car occupancy line in week view */
   showFamilyCarLine?: boolean;
+  /** YYYY-MM-DD for siste fullførte poenguke (mandag), brukes ved ukentlig finalisering. */
+  lastFinalizedPointsWeekKey?: string;
 }

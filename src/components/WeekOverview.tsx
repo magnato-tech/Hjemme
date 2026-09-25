@@ -1,13 +1,14 @@
 import React from 'react';
 import { useFamily } from '../context/FamilyContext';
+import { isInCurrentPointsWeek } from '../utils/dateUtils';
+import { memberHasCrown } from '../utils/pointsHistoryUtils';
+import { PointsHistoryChart } from './PointsHistoryChart';
 import {
   TrendingUp,
   CheckCircle2,
-  Clock,
-  Sparkles,
   TaskIcon,
   Check,
-  Zap,
+  Crown,
 } from './Icons';
 
 export const WeekOverview: React.FC = () => {
@@ -17,11 +18,17 @@ export const WeekOverview: React.FC = () => {
     currentWeek,
     getMemberCompletedPoints,
     getMemberClaimedPoints,
+    weeklyPointsRecords,
     completeTask,
     claimTask,
   } = useFamily();
 
-  const weekTasks = taskInstances.filter((t) => t.weekNumber === currentWeek);
+  const weekTasks = taskInstances.filter(
+    (t) =>
+      t.status === 'available' ||
+      t.status === 'claimed' ||
+      (t.status === 'completed' && isInCurrentPointsWeek(t.completedAt))
+  );
 
   return (
     <div className="space-y-6 pb-20 md:pb-8">
@@ -48,6 +55,12 @@ export const WeekOverview: React.FC = () => {
           const goal = member.weeklyPointsGoal || 1;
           const remaining = Math.max(0, goal - completed);
           const percent = Math.min(100, Math.round((completed / goal) * 100));
+          const hasCrown = memberHasCrown(
+            weeklyPointsRecords,
+            member.id,
+            completed,
+            goal
+          );
 
           return (
             <div
@@ -57,11 +70,22 @@ export const WeekOverview: React.FC = () => {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className="w-11 h-11 rounded-2xl bg-white/80 border border-white/80 shadow-2xs flex items-center justify-center text-2xl">
+                    <div className="relative w-11 h-11 rounded-2xl bg-white/80 border border-white/80 shadow-2xs flex items-center justify-center text-2xl">
                       {member.avatarEmoji}
+                      {hasCrown && (
+                        <span
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center shadow-sm border border-amber-500"
+                          title="4 uker på rad med poengmål!"
+                        >
+                          <Crown className="w-3.5 h-3.5 text-amber-900" />
+                        </span>
+                      )}
                     </div>
                     <div>
-                      <h3 className="font-bold text-slate-900 text-base">{member.name}</h3>
+                      <h3 className="font-bold text-slate-900 text-base flex items-center gap-1.5">
+                        {member.name}
+                        {hasCrown && <span className="text-amber-500" aria-hidden>👑</span>}
+                      </h3>
                       <span className="text-xs text-slate-500 font-medium capitalize">
                         {member.role === 'admin'
                           ? 'Administrator'
@@ -108,6 +132,15 @@ export const WeekOverview: React.FC = () => {
                 >
                   {remaining > 0 ? `${remaining} poeng` : 'Mål nådd! 🎉'}
                 </span>
+              </div>
+
+              <div className="pt-4 mt-3 border-t border-slate-200/40">
+                <PointsHistoryChart
+                  member={member}
+                  records={weeklyPointsRecords}
+                  liveCompletedPoints={completed}
+                  compact
+                />
               </div>
             </div>
           );

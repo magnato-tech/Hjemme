@@ -19,6 +19,7 @@ import {
   TaskTemplate,
   TaskInstance,
   FamilySettings,
+  MemberWeeklyPointsRecord,
 } from '../types';
 
 export const FAMILY_ID = 'totland';
@@ -308,6 +309,39 @@ export async function saveSettingsToFirestore(settings: FamilySettings) {
   const path = 'settings/main';
   try {
     await setDoc(doc(db, 'settings', 'main'), withFamily(settings), { merge: true });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+// 8. Weekly Points History
+export function subscribeWeeklyPoints(
+  onUpdate: (records: MemberWeeklyPointsRecord[]) => void,
+  onError?: (err: unknown) => void
+) {
+  const path = 'weeklyPoints';
+  const q = query(collection(db, path), where('familyId', '==', FAMILY_ID));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: MemberWeeklyPointsRecord[] = [];
+      snapshot.forEach((docSnap) => {
+        items.push(docSnap.data() as MemberWeeklyPointsRecord);
+      });
+      onUpdate(items);
+    },
+    (error) => {
+      console.warn('Firestore subscription warning (weeklyPoints):', error.message);
+      if (onError) onError(error);
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function saveWeeklyPointsRecordToFirestore(record: MemberWeeklyPointsRecord) {
+  const path = `weeklyPoints/${record.id}`;
+  try {
+    await setDoc(doc(db, 'weeklyPoints', record.id), withFamily(record), { merge: true });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
   }

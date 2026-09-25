@@ -22,6 +22,8 @@ import {
   deleteTaskInstanceFromFirestore,
   subscribeSettings,
   saveSettingsToFirestore,
+  subscribeWeeklyPoints,
+  saveWeeklyPointsRecordToFirestore,
   seedInitialDataIfEmpty,
 } from '../services/firestoreService';
 import {
@@ -42,6 +44,7 @@ import {
   PerCalendarConfig,
   CalendarCarMode,
   CalendarPrivacyMode,
+  MemberWeeklyPointsRecord,
 } from '../types';
 import {
   initialFamilyMembers,
@@ -57,7 +60,22 @@ import {
   calculateBufferedTime,
   findConflictingReservations,
   getWeekNumber,
+  getPointsWeekStart,
+  formatLocalDateKey,
 } from '../utils/dateUtils';
+import {
+  buildWeeklyPointsRecord,
+  getWeeksToFinalize,
+} from '../utils/pointsHistoryUtils';
+import {
+  buildRestartedTaskInstances,
+  completeTaskInstance,
+  createTaskInstanceFromTemplate,
+  getMemberClaimedPoints as getMemberClaimedPointsUtil,
+  getMemberCompletedPoints as getMemberCompletedPointsUtil,
+  spawnNextTaskInstance,
+} from '../utils/taskUtils';
+import { migrateTaskTemplates } from '../utils/taskMigration';
 import {
   requestGoogleAccessToken,
   createGoogleCalendarEvent,
@@ -167,6 +185,7 @@ interface FamilyContextType {
   createTaskTemplate: (template: Omit<TaskTemplate, 'id'>) => void;
   updateTaskTemplate: (id: string, updates: Partial<TaskTemplate>) => void;
   deleteTaskTemplate: (id: string) => void;
+  restartTaskPool: () => void;
 
   // Settings
   settings: FamilySettings;
@@ -182,8 +201,9 @@ interface FamilyContextType {
   pushAllToFirestore: () => Promise<void>;
 
   // Metrics & helpers
-  getMemberCompletedPoints: (memberId: string, weekNumber?: number) => number;
-  getMemberClaimedPoints: (memberId: string, weekNumber?: number) => number;
+  getMemberCompletedPoints: (memberId: string) => number;
+  getMemberClaimedPoints: (memberId: string) => number;
+  weeklyPointsRecords: MemberWeeklyPointsRecord[];
   currentWeek: number;
   resetAllData: () => void;
 }
@@ -288,7 +308,7 @@ export const mergeCalendarsList = (
 };
 
 export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const currentWeek = getWeekNumber();
+  const currentWeek = getWeekNumber(getPointsWeekStart());
   const currentYear = new Date().getFullYear();
 
   // Load from localStorage or defaults
@@ -302,6 +322,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>(initialTaskTemplates);
   const [taskInstances, setTaskInstances] = useState<TaskInstance[]>(initialTaskInstances);
   const [settings, setSettings] = useState<FamilySettings>(initialSettings);
+  const [weeklyPointsRecords, setWeeklyPointsRecords] = useState<MemberWeeklyPointsRecord[]>([]);
 
   // Firebase Auth & Firestore state
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -361,9 +382,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (parsed.calendarEvents) {
           setCalendarEvents(parsed.settings?.disableMockData ? parsed.calendarEvents.filter((e: CalendarEvent) => !isMockEv(e)) : parsed.calendarEvents);
         }
-        if (parsed.taskTemplates) setTaskTemplates(parsed.taskTemplates);
+        if (parsed.taskTemplates) setTaskTemplates(migrateTaskTemplates(parsed.taskTemplates));
         if (parsed.taskInstances) setTaskInstances(parsed.taskInstances);
         if (parsed.settings) setSettings(parsed.settings);
+        if (parsed.weeklyPointsRecords) setWeeklyPointsRecords(parsed.weeklyPointsRecords);
         if (parsed.activeMemberId) setActiveMemberId(parsed.activeMemberId);
       }
     } catch (e) {
@@ -386,6 +408,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         taskTemplates,
         taskInstances,
         settings,
+        weeklyPointsRecords,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
     } catch (e) {
@@ -402,7 +425,57 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     taskTemplates,
     taskInstances,
     settings,
+    weeklyPointsRecords,
   ]);
+
+  // Finaliser avsluttede poenguker og lagre historikk
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const weeksToFinalize = getWeeksToFinalize(settings.lastFinalizedPointsWeekKey);
+    if (weeksToFinalize.length === 0) return;
+
+    const existingIds = new Set(weeklyPointsRecords.map((r) => r.id));
+    const toAdd: MemberWeeklyPointsRecord[] = [];
+
+    for (const weekStart of weeksToFinalize) {
+      for (const member of members) {
+        const record = buildWeeklyPointsRecord(member, taskInstances, weekStart);
+        if (!existingIds.has(record.id)) {
+          toAdd.push(record);
+        }
+      }
+    }
+
+    const latestKey = formatLocalDateKey(weeksToFinalize[weeksToFinalize.length - 1]);
+
+    if (toAdd.length > 0) {
+      setWeeklyPointsRecords((prev) => {
+        const merged = [...prev];
+        for (const record of toAdd) {
+          if (!merged.some((r) => r.id === record.id)) {
+            merged.push(record);
+          }
+        }
+        return merged;
+      });
+      toAdd.forEach((r) => {
+        if (firebaseUser) {
+          saveWeeklyPointsRecordToFirestore(r).catch(console.error);
+        }
+      });
+    }
+
+    if (settings.lastFinalizedPointsWeekKey !== latestKey) {
+      setSettings((prev) => {
+        const updated = { ...prev, lastFinalizedPointsWeekKey: latestKey };
+        if (firebaseUser) {
+          saveSettingsToFirestore(updated).catch(console.error);
+        }
+        return updated;
+      });
+    }
+  }, [isLoaded, members, taskInstances, settings.lastFinalizedPointsWeekKey, firebaseUser]);
 
   // Firebase Auth Listener & Firestore Real-Time Sync
   useEffect(() => {
@@ -464,7 +537,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
           const uTaskTemplates = subscribeTaskTemplates((cloudTmpl) => {
             if (cloudTmpl && cloudTmpl.length > 0) {
-              setTaskTemplates(cloudTmpl);
+              setTaskTemplates(migrateTaskTemplates(cloudTmpl));
             }
           });
           unsubs.push(uTaskTemplates);
@@ -482,6 +555,13 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }
           });
           unsubs.push(uSettings);
+
+          const uWeeklyPoints = subscribeWeeklyPoints((cloudRecords) => {
+            if (cloudRecords && cloudRecords.length > 0) {
+              setWeeklyPointsRecords(cloudRecords);
+            }
+          });
+          unsubs.push(uWeeklyPoints);
 
           setIsFirestoreConnected(true);
         } catch (syncErr) {
@@ -551,6 +631,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
       // Save settings
       await saveSettingsToFirestore(settings);
+      // Save weekly points history
+      for (const record of weeklyPointsRecords) {
+        await saveWeeklyPointsRecordToFirestore(record);
+      }
       setIsFirestoreConnected(true);
     } catch (err) {
       console.error('Push to Firestore failed:', err);
@@ -1801,76 +1885,35 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // COMPLETE TASK: Marks done, records historical points, and AUTOMATICALLY generates next recurring instance
   const completeTask = (instanceId: string, memberId?: string) => {
     const targetMemberId = memberId || activeMemberId;
     const member = members.find((m) => m.id === targetMemberId) || activeMember;
+    const completedAt = new Date().toISOString();
     let completedInstance: TaskInstance | undefined;
+    let nextInstance: TaskInstance | undefined;
 
     setTaskInstances((prev) => {
       const updated = prev.map((t) => {
-        if (t.id === instanceId) {
-          completedInstance = {
-            ...t,
-            status: 'completed',
-            completedByMemberId: member.id,
-            completedByName: member.name,
-            completedAt: new Date().toISOString(),
-            claimedByMemberId: t.claimedByMemberId || member.id,
-            claimedByName: t.claimedByName || member.name,
-          };
-          return completedInstance;
-        }
-        return t;
+        if (t.id !== instanceId) return t;
+        completedInstance = completeTaskInstance(t, member, completedAt);
+        return completedInstance;
       });
 
-      // Automation Rule (Prompt #12 & #13):
-      // When a recurring task is completed, automatically create the next instance for next week/cycle!
       if (completedInstance) {
         const template = taskTemplates.find((tmpl) => tmpl.id === completedInstance?.templateId);
-        if (template && template.isActive && template.recurrence !== 'once') {
-          const nextWeek = (completedInstance.weekNumber % 52) + 1;
-          const nextYear = nextWeek === 1 ? completedInstance.year + 1 : completedInstance.year;
-
-          // Check if an instance for next week already exists
-          const alreadyExists = prev.some(
-            (inst) =>
-              inst.templateId === template.id &&
-              inst.weekNumber === nextWeek &&
-              inst.year === nextYear
-          );
-
-          if (!alreadyExists) {
-            const nextInstance: TaskInstance = {
-              id: `inst_${template.id}_w${nextWeek}_${Date.now().toString(36)}`,
-              templateId: template.id,
-              title: template.title,
-              description: template.description,
-              area: template.area,
-              room: template.room,
-              points: template.points,
-              weekNumber: nextWeek,
-              year: nextYear,
-              status: 'available',
-              deadlineDate: template.deadlineDay || 'Søndag 20:00',
-              iconName: template.iconName,
-              isMandatory: template.isMandatory,
-            };
-            updated.push(nextInstance);
-
-            if (firebaseUser) {
-              saveTaskInstanceToFirestore(nextInstance).catch(console.error);
-            }
-          }
+        if (template) {
+          nextInstance = spawnNextTaskInstance(template, completedAt, updated) ?? undefined;
+          if (nextInstance) updated.push(nextInstance);
         }
-      }
-
-      if (firebaseUser && completedInstance) {
-        saveTaskInstanceToFirestore(completedInstance).catch(console.error);
       }
 
       return updated;
     });
+
+    if (firebaseUser) {
+      if (completedInstance) saveTaskInstanceToFirestore(completedInstance).catch(console.error);
+      if (nextInstance) saveTaskInstanceToFirestore(nextInstance).catch(console.error);
+    }
   };
 
   const claimSuggestedTasks = (instanceIds: string[], memberId?: string) => {
@@ -1902,27 +1945,19 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setTaskTemplates((prev) => [...prev, newTemplate]);
 
-    // Create immediate instance for current week
-    const newInstance: TaskInstance = {
-      id: `inst_${templateId}_w${currentWeek}_${Date.now().toString(36)}`,
-      templateId: templateId,
-      title: newTemplate.title,
-      description: newTemplate.description,
-      area: newTemplate.area,
-      room: newTemplate.room,
-      points: newTemplate.points,
-      weekNumber: currentWeek,
-      year: currentYear,
-      status: 'available',
-      deadlineDate: newTemplate.deadlineDay || 'Søndag 20:00',
-      iconName: newTemplate.iconName,
-      isMandatory: newTemplate.isMandatory,
-    };
-    setTaskInstances((prev) => [...prev, newInstance]);
+    if (newTemplate.isActive) {
+      const newInstance = createTaskInstanceFromTemplate(newTemplate, new Date());
+      setTaskInstances((prev) => [...prev, newInstance]);
+
+      if (firebaseUser) {
+        saveTaskTemplateToFirestore(newTemplate).catch(console.error);
+        saveTaskInstanceToFirestore(newInstance).catch(console.error);
+        return;
+      }
+    }
 
     if (firebaseUser) {
       saveTaskTemplateToFirestore(newTemplate).catch(console.error);
-      saveTaskInstanceToFirestore(newInstance).catch(console.error);
     }
   };
 
@@ -1946,6 +1981,21 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setTaskTemplates((prev) => prev.filter((tmpl) => tmpl.id !== id));
     if (firebaseUser) {
       deleteTaskTemplateFromFirestore(id).catch(console.error);
+    }
+  };
+
+  const restartTaskPool = () => {
+    const oldInstanceIds = taskInstances.map((inst) => inst.id);
+    const freshInstances = buildRestartedTaskInstances(taskTemplates, new Date());
+    setTaskInstances(freshInstances);
+
+    if (firebaseUser) {
+      oldInstanceIds.forEach((id) => {
+        deleteTaskInstanceFromFirestore(id).catch(console.error);
+      });
+      freshInstances.forEach((inst) => {
+        saveTaskInstanceToFirestore(inst).catch(console.error);
+      });
     }
   };
 
@@ -2023,30 +2073,11 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
   };
 
-  // Points calculation helper
-  const getMemberCompletedPoints = (memberId: string, weekNum: number = currentWeek) => {
-    return taskInstances
-      .filter(
-        (t) =>
-          t.weekNumber === weekNum &&
-          t.year === currentYear &&
-          t.status === 'completed' &&
-          (t.completedByMemberId === memberId || (!t.completedByMemberId && t.claimedByMemberId === memberId))
-      )
-      .reduce((sum, t) => sum + t.points, 0);
-  };
+  const getMemberCompletedPoints = (memberId: string) =>
+    getMemberCompletedPointsUtil(taskInstances, memberId);
 
-  const getMemberClaimedPoints = (memberId: string, weekNum: number = currentWeek) => {
-    return taskInstances
-      .filter(
-        (t) =>
-          t.weekNumber === weekNum &&
-          t.year === currentYear &&
-          t.status === 'claimed' &&
-          t.claimedByMemberId === memberId
-      )
-      .reduce((sum, t) => sum + t.points, 0);
-  };
+  const getMemberClaimedPoints = (memberId: string) =>
+    getMemberClaimedPointsUtil(taskInstances, memberId);
 
   const resetAllData = () => {
     localStorage.removeItem(STORAGE_KEY);
@@ -2058,6 +2089,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setTaskTemplates(initialTaskTemplates);
     setTaskInstances(initialTaskInstances);
     setSettings(initialSettings);
+    setWeeklyPointsRecords([]);
     setActiveMemberId('member_marcus');
   };
 
@@ -2134,6 +2166,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         createTaskTemplate,
         updateTaskTemplate,
         deleteTaskTemplate,
+        restartTaskPool,
         settings,
         updateSettings,
         firebaseUser,
@@ -2145,6 +2178,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         pushAllToFirestore,
         getMemberCompletedPoints,
         getMemberClaimedPoints,
+        weeklyPointsRecords,
         currentWeek,
         resetAllData,
       }}

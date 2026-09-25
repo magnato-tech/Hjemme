@@ -1,4 +1,5 @@
 import { FamilyMember, TaskInstance, TaskTemplate } from '../../types';
+import { calculateDueAt, createTaskInstanceFromTemplate } from '../../utils/taskUtils';
 
 export const TEST_WEEK = 39;
 export const TEST_YEAR = 2026;
@@ -50,8 +51,8 @@ export const houseTaskTemplates: TaskTemplate[] = [
     area: '1. etasje',
     room: 'Stue & Gang',
     points: 2,
-    recurrence: 'weekly',
-    deadlineDay: 'Søndag 20:00',
+    intervalDays: 7,
+    fixedWeekday: 0,
     eligibleMemberIds: ['member_marcus', 'member_synelle', 'member_magnar'],
     isActive: true,
     isMandatory: true,
@@ -64,8 +65,8 @@ export const houseTaskTemplates: TaskTemplate[] = [
     area: '1. etasje',
     room: 'Kjøkken',
     points: 1,
-    recurrence: 'weekly',
-    deadlineDay: 'Løpende',
+    intervalDays: 2,
+    fixedWeekday: null,
     eligibleMemberIds: ['member_marcus', 'member_synelle', 'member_magnar'],
     isActive: true,
     isMandatory: false,
@@ -78,8 +79,8 @@ export const houseTaskTemplates: TaskTemplate[] = [
     area: '1. & 2. etasje',
     room: 'Bad',
     points: 4,
-    recurrence: 'weekly',
-    deadlineDay: 'Søndag 20:00',
+    intervalDays: 7,
+    fixedWeekday: 0,
     eligibleMemberIds: ['member_marcus', 'member_synelle', 'member_magnar'],
     isActive: true,
     isMandatory: true,
@@ -92,8 +93,8 @@ export const houseTaskTemplates: TaskTemplate[] = [
     area: 'Ute',
     room: 'Butikk',
     points: 3,
-    recurrence: 'weekly',
-    deadlineDay: 'Fredag 18:00',
+    intervalDays: 7,
+    fixedWeekday: 5,
     eligibleMemberIds: ['member_synelle', 'member_magnar'],
     isActive: true,
     isMandatory: false,
@@ -106,8 +107,8 @@ export const houseTaskTemplates: TaskTemplate[] = [
     area: 'Ute & Hage',
     room: 'Garasje',
     points: 5,
-    recurrence: 'once',
-    deadlineDay: 'Søndag 20:00',
+    intervalDays: 0,
+    fixedWeekday: null,
     eligibleMemberIds: [],
     isActive: true,
     isMandatory: false,
@@ -118,8 +119,10 @@ export const houseTaskTemplates: TaskTemplate[] = [
 function makeAvailableInstance(
   id: string,
   template: TaskTemplate,
+  anchor: string,
   overrides: Partial<TaskInstance> = {}
 ): TaskInstance {
+  const dueAt = calculateDueAt(anchor, template.intervalDays, template.fixedWeekday);
   return {
     id,
     templateId: template.id,
@@ -131,15 +134,16 @@ function makeAvailableInstance(
     weekNumber: TEST_WEEK,
     year: TEST_YEAR,
     status: 'available',
-    deadlineDate: template.deadlineDay,
+    deadlineDate: dueAt.toISOString(),
     iconName: template.iconName,
     isMandatory: template.isMandatory,
     ...overrides,
   };
 }
 
-/** Marcus har 7 poeng fullført; 3 ledige oppgaver i uken. */
+/** Marcus har 7 poeng fullført; ledige oppgaver i poolen. */
 export function createHouseWeekInstances(): TaskInstance[] {
+  const anchor = '2026-09-22T10:00:00';
   const koste = houseTaskTemplates[0];
   const oppvask = houseTaskTemplates[1];
   const bad = houseTaskTemplates[2];
@@ -147,8 +151,7 @@ export function createHouseWeekInstances(): TaskInstance[] {
 
   return [
     {
-      ...makeAvailableInstance('inst_soppel_done', houseTaskTemplates[1]),
-      templateId: 'tmpl_soppel',
+      ...makeAvailableInstance('inst_soppel_done', oppvask, anchor),
       title: 'Søppel',
       area: 'Ute / Kjøkken',
       room: 'Søppelkasser',
@@ -158,9 +161,10 @@ export function createHouseWeekInstances(): TaskInstance[] {
       claimedByName: marcus.name,
       completedByMemberId: marcus.id,
       completedByName: marcus.name,
+      completedAt: '2026-09-23T12:00:00',
     },
     {
-      ...makeAvailableInstance('inst_koste_opp_done', koste),
+      ...makeAvailableInstance('inst_koste_opp_done', koste, anchor),
       title: 'Koste opp',
       area: '2. etasje',
       room: 'Gang & Rom',
@@ -170,9 +174,10 @@ export function createHouseWeekInstances(): TaskInstance[] {
       claimedByName: marcus.name,
       completedByMemberId: marcus.id,
       completedByName: marcus.name,
+      completedAt: '2026-09-24T12:00:00',
     },
     {
-      ...makeAvailableInstance('inst_vaske_gulv_done', bad),
+      ...makeAvailableInstance('inst_vaske_gulv_done', bad, anchor),
       title: 'Vaske gulv oppe',
       area: '2. etasje',
       room: 'Alle rom oppe',
@@ -182,10 +187,18 @@ export function createHouseWeekInstances(): TaskInstance[] {
       claimedByName: marcus.name,
       completedByMemberId: marcus.id,
       completedByName: marcus.name,
+      completedAt: '2026-09-25T12:00:00',
     },
-    makeAvailableInstance('inst_koste_nede_avail', koste),
-    makeAvailableInstance('inst_tomme_oppvask_avail', oppvask),
-    makeAvailableInstance('inst_vaske_bad_avail', bad),
-    makeAvailableInstance('inst_handle_avail', handle),
+    makeAvailableInstance('inst_koste_nede_avail', koste, anchor),
+    makeAvailableInstance('inst_tomme_oppvask_avail', oppvask, anchor),
+    makeAvailableInstance('inst_vaske_bad_avail', bad, anchor),
+    makeAvailableInstance('inst_handle_avail', handle, anchor),
   ];
+}
+
+export function createTemplateInstance(
+  template: TaskTemplate,
+  anchor = '2026-09-22T10:00:00'
+): TaskInstance {
+  return createTaskInstanceFromTemplate(template, anchor, () => 12345);
 }

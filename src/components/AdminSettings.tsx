@@ -34,7 +34,12 @@ import {
   Lock,
   Unlock,
 } from './Icons';
-import { Role, HouseArea, TaskTemplate, RecurrenceType, GoogleCalendarItem } from '../types';
+import { Role, HouseArea, TaskTemplate, GoogleCalendarItem } from '../types';
+import {
+  TASK_WEEKDAY_OPTIONS,
+  formatTemplateDeadlineRule,
+  formatTemplateSchedule,
+} from '../utils/taskUtils';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
 import { isCalendarDisabled } from '../utils/calendarVisibility';
 
@@ -92,6 +97,7 @@ export const AdminSettings: React.FC = () => {
     createTaskTemplate,
     updateTaskTemplate,
     deleteTaskTemplate,
+    restartTaskPool,
     resetAllData,
     firebaseUser,
     isFirestoreConnected,
@@ -151,8 +157,9 @@ export const AdminSettings: React.FC = () => {
   const [templateFormArea, setTemplateFormArea] = useState('1. etasje');
   const [templateFormRoom, setTemplateFormRoom] = useState('Stue');
   const [templateFormPoints, setTemplateFormPoints] = useState(2);
-  const [templateFormRecurrence, setTemplateFormRecurrence] = useState<RecurrenceType>('weekly');
-  const [templateFormDeadline, setTemplateFormDeadline] = useState('Søndag 20:00');
+  const [templateFormIntervalDays, setTemplateFormIntervalDays] = useState(7);
+  const [templateFormFixedWeekday, setTemplateFormFixedWeekday] = useState<number | null>(null);
+  const [showRestartTaskPoolConfirm, setShowRestartTaskPoolConfirm] = useState(false);
   const [templateFormIsMandatory, setTemplateFormIsMandatory] = useState(false);
   const [templateFormIcon, setTemplateFormIcon] = useState('brush');
 
@@ -241,8 +248,8 @@ export const AdminSettings: React.FC = () => {
     setTemplateFormArea(areas[0]?.name || '1. etasje');
     setTemplateFormRoom(areas[0]?.rooms[0] || 'Kjøkken');
     setTemplateFormPoints(2);
-    setTemplateFormRecurrence('weekly');
-    setTemplateFormDeadline('Søndag 20:00');
+    setTemplateFormIntervalDays(7);
+    setTemplateFormFixedWeekday(null);
     setTemplateFormIsMandatory(false);
     setTemplateFormIcon('brush');
     setIsCreatingTaskTemplate(true);
@@ -255,8 +262,8 @@ export const AdminSettings: React.FC = () => {
     setTemplateFormArea(tmpl.area);
     setTemplateFormRoom(tmpl.room);
     setTemplateFormPoints(tmpl.points);
-    setTemplateFormRecurrence(tmpl.recurrence);
-    setTemplateFormDeadline(tmpl.deadlineDay);
+    setTemplateFormIntervalDays(tmpl.intervalDays);
+    setTemplateFormFixedWeekday(tmpl.fixedWeekday);
     setTemplateFormIsMandatory(tmpl.isMandatory);
     setTemplateFormIcon(tmpl.iconName);
     setIsCreatingTaskTemplate(true);
@@ -273,8 +280,8 @@ export const AdminSettings: React.FC = () => {
         area: templateFormArea,
         room: templateFormRoom,
         points: Number(templateFormPoints) || 1,
-        recurrence: templateFormRecurrence,
-        deadlineDay: templateFormDeadline,
+        intervalDays: Number(templateFormIntervalDays) || 0,
+        fixedWeekday: templateFormFixedWeekday,
         isMandatory: templateFormIsMandatory,
         iconName: templateFormIcon,
       });
@@ -286,8 +293,8 @@ export const AdminSettings: React.FC = () => {
         area: templateFormArea,
         room: templateFormRoom,
         points: Number(templateFormPoints) || 1,
-        recurrence: templateFormRecurrence,
-        deadlineDay: templateFormDeadline,
+        intervalDays: Number(templateFormIntervalDays) || 0,
+        fixedWeekday: templateFormFixedWeekday,
         eligibleMemberIds: members.map((m) => m.id),
         isActive: true,
         isMandatory: templateFormIsMandatory,
@@ -786,16 +793,25 @@ export const AdminSettings: React.FC = () => {
               <div>
                 <h2 className="text-base font-bold text-slate-900">Konfigurerbart Oppgavebibliotek</h2>
                 <p className="text-xs text-slate-500">
-                  Definer familiens faste oppgaver, poeng, etasje, rom, frist og gjentakelsesfrekvens.
+                  Definer familiens faste oppgaver, poeng, etasje, rom, antall dager og fristregler.
                 </p>
               </div>
-              <button
-                onClick={openNewTaskTemplateModal}
-                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl shadow-xs flex items-center gap-1.5 transition-all shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Ny oppgavemal</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setShowRestartTaskPoolConfirm(true)}
+                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl shadow-xs flex items-center gap-1.5 transition-all"
+                >
+                  <RotateCw className="w-4 h-4" />
+                  <span>Start</span>
+                </button>
+                <button
+                  onClick={openNewTaskTemplateModal}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-2xl shadow-xs flex items-center gap-1.5 transition-all"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Ny oppgavemal</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -827,10 +843,10 @@ export const AdminSettings: React.FC = () => {
 
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 pt-1">
                       <span className="bg-white/80 px-2 py-0.5 rounded-lg border border-slate-200/60 font-medium">
-                        🔄 {tmpl.recurrence === 'weekly' ? 'Hver uke (Auto)' : tmpl.recurrence}
+                        🔄 {formatTemplateSchedule(tmpl)}
                       </span>
                       <span className="bg-white/80 px-2 py-0.5 rounded-lg border border-slate-200/60 font-medium">
-                        ⏰ Frist: {tmpl.deadlineDay}
+                        ⏰ {formatTemplateDeadlineRule(tmpl)}
                       </span>
                       {tmpl.isMandatory && (
                         <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded-lg font-semibold border border-rose-100">
@@ -2170,29 +2186,34 @@ export const AdminSettings: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Gjentakelse</label>
-                  <select
-                    value={templateFormRecurrence}
-                    onChange={(e) => setTemplateFormRecurrence(e.target.value as RecurrenceType)}
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Antall dager</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="365"
+                    value={templateFormIntervalDays}
+                    onChange={(e) => setTemplateFormIntervalDays(Number(e.target.value))}
                     className="w-full px-2 py-2.5 rounded-2xl border border-slate-200 text-xs font-medium"
-                  >
-                    <option value="weekly">Hver uke (Auto)</option>
-                    <option value="biweekly">Hver 2. uke</option>
-                    <option value="daily">Daglig</option>
-                    <option value="monthly">Månedlig</option>
-                    <option value="once">Engangs</option>
-                  </select>
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">0 = engangsoppgave</p>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Frist</label>
-                  <input
-                    type="text"
-                    value={templateFormDeadline}
-                    onChange={(e) => setTemplateFormDeadline(e.target.value)}
-                    placeholder="Søndag 20:00"
-                    className="w-full px-2.5 py-2.5 rounded-2xl border border-slate-200 text-xs"
-                  />
+                  <select
+                    value={templateFormFixedWeekday === null ? '' : String(templateFormFixedWeekday)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTemplateFormFixedWeekday(val === '' ? null : Number(val));
+                    }}
+                    className="w-full px-2 py-2.5 rounded-2xl border border-slate-200 text-xs font-medium"
+                  >
+                    {TASK_WEEKDAY_OPTIONS.map((opt) => (
+                      <option key={opt.label} value={opt.value === null ? '' : String(opt.value)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -2271,6 +2292,43 @@ export const AdminSettings: React.FC = () => {
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Slett kalender</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restart Task Pool Confirmation */}
+      {showRestartTaskPoolConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">Start oppgavepoolen på nytt?</h3>
+            <p className="text-sm text-slate-600 leading-relaxed mb-4">
+              Dette sletter alle eksisterende oppgaver (ledige, pågående og fullførte) og
+              poenghistorikk knyttet til dem. Deretter opprettes nye ledige oppgaver for alle aktive
+              maler med antall dager over 0.
+            </p>
+            <p className="text-xs text-rose-700 font-semibold bg-rose-50 border border-rose-100 rounded-xl px-3 py-2 mb-5">
+              Denne handlingen kan ikke angres.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRestartTaskPoolConfirm(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  restartTaskPool();
+                  setShowRestartTaskPoolConfirm(false);
+                  showNotification('✅ Oppgavepoolen er startet på nytt!');
+                }}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs"
+              >
+                Ja, start på nytt
               </button>
             </div>
           </div>

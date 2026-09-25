@@ -70,15 +70,10 @@ export const DashboardToday: React.FC<DashboardTodayProps> = ({
 
   // Active member's claimed or available tasks
   const myClaimedTasks = taskInstances.filter(
-    (t) =>
-      t.weekNumber === currentWeek &&
-      t.status === 'claimed' &&
-      t.claimedByMemberId === activeMember.id
+    (t) => t.status === 'claimed' && t.claimedByMemberId === activeMember.id
   );
 
-  const availableTasks = taskInstances.filter(
-    (t) => t.weekNumber === currentWeek && t.status === 'available'
-  );
+  const availableTasks = taskInstances.filter((t) => t.status === 'available');
 
   // Smart recommender: Find task combination to fulfill remaining points
   const getSuggestedTasks = () => {

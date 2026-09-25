@@ -4,7 +4,11 @@ import {
   checkTimeCollision,
   formatLocalDateKey,
   formatTimeRange,
+  getPointsWeekStart,
+  getPointsWeekStartOffset,
+  isInPointsWeek,
   getWeekNumber,
+  isInCurrentPointsWeek,
   isSameDay,
   parseLocalDate,
 } from '../utils/dateUtils';
@@ -65,5 +69,29 @@ describe('dateUtils', () => {
 
   it('getWeekNumber returnerer ISO-ukenummer', () => {
     expect(getWeekNumber(new Date(2026, 8, 25))).toBe(39);
+  });
+
+  it('poenguke starter mandag kl 06:00', () => {
+    const friday = new Date(2026, 8, 25, 14, 0, 0);
+    const weekStart = getPointsWeekStart(friday);
+    expect(weekStart.getDay()).toBe(1);
+    expect(weekStart.getHours()).toBe(6);
+    expect(weekStart.getDate()).toBe(21);
+  });
+
+  it('poenguken nullstilles mandag kl 06:00', () => {
+    const mondayBeforeReset = new Date(2026, 8, 21, 5, 30, 0);
+    const mondayAfterReset = new Date(2026, 8, 21, 7, 0, 0);
+    expect(isInCurrentPointsWeek('2026-09-20T12:00:00', mondayAfterReset)).toBe(false);
+    expect(isInCurrentPointsWeek('2026-09-21T06:30:00', mondayAfterReset)).toBe(true);
+    expect(isInCurrentPointsWeek('2026-09-20T12:00:00', mondayBeforeReset)).toBe(true);
+    expect(isInCurrentPointsWeek('2026-09-14T05:00:00', mondayBeforeReset)).toBe(false);
+  });
+
+  it('isInPointsWeek sjekker spesifikk poenguke', () => {
+    const friday = new Date(2026, 8, 25, 14, 0, 0);
+    const lastWeek = getPointsWeekStartOffset(1, friday);
+    expect(isInPointsWeek('2026-09-18T12:00:00', lastWeek)).toBe(true);
+    expect(isInPointsWeek('2026-09-21T07:00:00', lastWeek)).toBe(false);
   });
 });

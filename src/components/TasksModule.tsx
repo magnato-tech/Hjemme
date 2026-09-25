@@ -4,45 +4,31 @@ import {
   Sparkles,
   CheckCircle2,
   Clock,
-  Plus,
   Zap,
   Check,
-  RotateCw,
-  ListTodo,
-  Edit2,
-  Trash2,
-  Info,
   TaskIcon,
-  Shield,
-  ArrowRight,
 } from './Icons';
-import { TaskInstance, TaskTemplate } from '../types';
-import { getMemberPointsProgress, getSmartTaskSuggestions } from '../utils/taskUtils';
+import { isInCurrentPointsWeek } from '../utils/dateUtils';
+import {
+  formatTaskDeadline,
+  getMemberPointsProgress,
+  getSmartTaskSuggestions,
+} from '../utils/taskUtils';
 
-interface TasksModuleProps {
-  onOpenCreateTask: () => void;
-}
-
-export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) => {
+export const TasksModule: React.FC = () => {
   const {
     activeMember,
-    members,
-    taskTemplates,
     taskInstances,
     claimTask,
     unclaimTask,
     completeTask,
     claimSuggestedTasks,
-    deleteTaskTemplate,
-    updateTaskTemplate,
     getMemberCompletedPoints,
     getMemberClaimedPoints,
     currentWeek,
   } = useFamily();
 
-  const [activeTab, setActiveTab] = useState<'my_tasks' | 'available' | 'library' | 'history'>('available');
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
-  const [editPoints, setEditPoints] = useState<number>(2);
+  const [activeTab, setActiveTab] = useState<'my_tasks' | 'available'>('available');
 
   const completedPoints = getMemberCompletedPoints(activeMember.id);
   const claimedPoints = getMemberClaimedPoints(activeMember.id);
@@ -51,31 +37,21 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
     activeMember.weeklyPointsGoal
   );
 
-  // Filter tasks for current week
-  const currentWeekInstances = taskInstances.filter((t) => t.weekNumber === currentWeek);
-
-  const myClaimedTasks = currentWeekInstances.filter(
+  const myClaimedTasks = taskInstances.filter(
     (t) => t.status === 'claimed' && t.claimedByMemberId === activeMember.id
   );
 
-  const myCompletedTasks = currentWeekInstances.filter(
-    (t) => t.status === 'completed' && (t.completedByMemberId === activeMember.id || t.claimedByMemberId === activeMember.id)
+  const myCompletedTasks = taskInstances.filter(
+    (t) =>
+      t.status === 'completed' &&
+      isInCurrentPointsWeek(t.completedAt) &&
+      (t.completedByMemberId === activeMember.id || t.claimedByMemberId === activeMember.id)
   );
 
-  const availableTasks = currentWeekInstances.filter((t) => t.status === 'available');
+  const availableTasks = taskInstances.filter((t) => t.status === 'available');
 
   const suggested = getSmartTaskSuggestions(availableTasks, remainingPoints);
   const suggestedTotal = suggested.reduce((s, t) => s + t.points, 0);
-
-  const handleStartEditTemplate = (tmpl: TaskTemplate) => {
-    setEditingTemplateId(tmpl.id);
-    setEditPoints(tmpl.points);
-  };
-
-  const handleSaveEditTemplate = (templateId: string) => {
-    updateTaskTemplate(templateId, { points: editPoints });
-    setEditingTemplateId(null);
-  };
 
   return (
     <div className="space-y-6 pb-20 md:pb-8">
@@ -94,14 +70,6 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
             </p>
           </div>
         </div>
-
-        <button
-          onClick={onOpenCreateTask}
-          className="flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white px-5 py-2.5 rounded-2xl text-sm font-semibold shadow-sm transition-all border border-indigo-400/30"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Ny oppgavemal</span>
-        </button>
       </div>
 
       {/* Point Goal Card for active member */}
@@ -215,22 +183,6 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
             {myClaimedTasks.length + myCompletedTasks.length}
           </span>
         </button>
-
-        <button
-          onClick={() => setActiveTab('library')}
-          className={`py-2.5 px-4 text-sm font-semibold rounded-xl transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'library'
-              ? 'bg-slate-900 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-          }`}
-        >
-          <span>Oppgavemaler & Poeng</span>
-          <span className={`px-2 py-0.5 text-xs rounded-full font-bold ${
-            activeTab === 'library' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-700'
-          }`}>
-            {taskTemplates.length}
-          </span>
-        </button>
       </div>
 
       {/* TAB CONTENT: AVAILABLE TASKS */}
@@ -279,7 +231,7 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
 
                     <div className="flex items-center space-x-2 text-[11px] text-slate-400 pt-1">
                       <Clock className="w-3.5 h-3.5" />
-                      <span>Frist: {task.deadlineDate}</span>
+                      <span>Frist: {formatTaskDeadline(task.deadlineDate)}</span>
                       {task.isMandatory && (
                         <span className="text-rose-600 font-semibold bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-100">
                           Obligatorisk
@@ -308,7 +260,7 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
                   Alle ukens oppgaver er tatt eller fullført!
                 </p>
                 <p className="text-xs text-slate-500 mt-1">
-                  Systemet vil automatisk generere neste ukes oppgaver ved ukeskifte.
+                  Nye oppgaver opprettes automatisk når en oppgave markeres som ferdig.
                 </p>
               </div>
             )}
@@ -416,103 +368,6 @@ export const TasksModule: React.FC<TasksModuleProps> = ({ onOpenCreateTask }) =>
                 </div>
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB CONTENT: OPPGAVEMALER & BIBLIOTEK */}
-      {activeTab === 'library' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">Oppgavemaler & Administrasjon</h2>
-              <p className="text-xs text-slate-500">
-                Endre poengverdi, rom eller gjentakelse. Historiske utførte oppgaver beholder tidligere poeng.
-              </p>
-            </div>
-            <button
-              onClick={onOpenCreateTask}
-              className="px-3.5 py-2 bg-white/80 hover:bg-white text-indigo-900 font-bold text-xs rounded-2xl border border-indigo-200 flex items-center gap-1 shadow-2xs transition-all"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Ny mal</span>
-            </button>
-          </div>
-
-          <div className="divide-y divide-slate-200/40 backdrop-blur-md bg-white/60 rounded-3xl border border-white/60 overflow-hidden shadow-sm">
-            {taskTemplates.map((tmpl) => {
-              const isEditing = editingTemplateId === tmpl.id;
-              return (
-                <div key={tmpl.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start space-x-3">
-                    <div className="p-2.5 bg-white/80 border border-slate-200/60 text-slate-700 rounded-2xl mt-0.5 shadow-2xs">
-                      <TaskIcon name={tmpl.iconName} className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h4 className="font-bold text-slate-900 text-sm sm:text-base">{tmpl.title}</h4>
-                        <span className="text-xs bg-white/80 px-2 py-0.5 rounded-lg font-medium text-slate-600 border border-slate-200/50 shadow-2xs">
-                          {tmpl.area}
-                        </span>
-                        <span className="text-[11px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg font-medium border border-indigo-100">
-                          {tmpl.recurrence === 'weekly' ? 'Hver uke' : tmpl.recurrence}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5">{tmpl.description}</p>
-                      <p className="text-[11px] text-slate-400 mt-1">Frist: {tmpl.deadlineDay}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-3 self-end sm:self-center">
-                    {isEditing ? (
-                      <div className="flex items-center space-x-2 bg-white/80 p-1.5 rounded-2xl border border-slate-300 shadow-2xs">
-                        <span className="text-xs font-semibold text-slate-600">Poeng:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="20"
-                          value={editPoints}
-                          onChange={(e) => setEditPoints(Number(e.target.value))}
-                          className="w-14 px-2 py-1 rounded-xl border border-slate-300 text-xs font-bold text-center bg-white"
-                        />
-                        <button
-                          onClick={() => handleSaveEditTemplate(tmpl.id)}
-                          className="px-3 py-1 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700"
-                        >
-                          Lagre
-                        </button>
-                        <button
-                          onClick={() => setEditingTemplateId(null)}
-                          className="px-2 py-1 text-slate-500 text-xs hover:text-slate-800"
-                        >
-                          Avbryt
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm font-extrabold text-indigo-900 px-3.5 py-1 bg-white/80 rounded-2xl border border-white/80 shadow-2xs">
-                          {tmpl.points} poeng
-                        </span>
-                        <button
-                          onClick={() => handleStartEditTemplate(tmpl)}
-                          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white/80 rounded-xl transition-colors"
-                          title="Endre poengverdi"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => deleteTaskTemplate(tmpl.id)}
-                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
-                          title="Slett mal"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
       )}
