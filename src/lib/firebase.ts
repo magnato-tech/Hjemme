@@ -1,13 +1,13 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { firebaseConfig } from './firebaseConfig';
 
 // Initialize Firebase App
 export const app = initializeApp(firebaseConfig);
 
 // Initialize Firestore with specific database ID as required
-const dbId = (firebaseConfig as any).firestoreDatabaseId || 'ai-studio-remixhomeapp-625f37a7-cb03-43da-929f-5f2c6b42511e';
+const dbId = firebaseConfig.firestoreDatabaseId;
 export const db = getFirestore(app, dbId);
 
 // Initialize Firebase Auth

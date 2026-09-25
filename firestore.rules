@@ -9,7 +9,7 @@ service cloud.firestore {
 
     // Connectivity test document
     match /test/{docId} {
-      allow read: if true;
+      allow read: if isFamilyMember();
     }
 
     // Global hardened primitives & helpers
@@ -21,8 +21,19 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    // Godkjente familiemedlemmer — legg til e-post når de får Google-konto
+    function familyEmails() {
+      return [
+        'magnar.totland@gmail.com',
+      ];
+    }
+
+    function isFamilyMember() {
+      return isVerified() && request.auth.token.email in familyEmails();
+    }
+
     function isAdmin() {
-      return isVerified() && request.auth.token.email == 'magnar.totland@gmail.com';
+      return isFamilyMember() && request.auth.token.email == 'magnar.totland@gmail.com';
     }
 
     function isValidId(id) {
@@ -108,51 +119,51 @@ service cloud.firestore {
 
     // 1. Members collection
     match /members/{memberId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(memberId) && isVerified() && isValidMember(incoming());
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(memberId) && isFamilyMember() && isValidMember(incoming());
       allow delete: if isValidId(memberId) && isAdmin();
     }
 
     // 2. Vehicles collection
     match /vehicles/{vehicleId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(vehicleId) && isVerified() && isValidVehicle(incoming());
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(vehicleId) && isFamilyMember() && isValidVehicle(incoming());
       allow delete: if isValidId(vehicleId) && isAdmin();
     }
 
     // 3. Reservations collection
     match /reservations/{reservationId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create: if isValidId(reservationId) && isVerified() && isValidReservation(incoming());
-      allow update: if isValidId(reservationId) && isVerified() && isValidReservation(incoming()) && incoming().memberId == existing().memberId;
-      allow delete: if isValidId(reservationId) && isVerified() && (existing().memberId == request.auth.uid || isAdmin());
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create: if isValidId(reservationId) && isFamilyMember() && isValidReservation(incoming());
+      allow update: if isValidId(reservationId) && isFamilyMember() && isValidReservation(incoming()) && incoming().memberId == existing().memberId;
+      allow delete: if isValidId(reservationId) && isFamilyMember() && (existing().memberId == request.auth.uid || isAdmin());
     }
 
     // 4. CalendarEvents collection
     match /calendarEvents/{eventId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(eventId) && isVerified() && isValidCalendarEvent(incoming());
-      allow delete: if isValidId(eventId) && isVerified();
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(eventId) && isFamilyMember() && isValidCalendarEvent(incoming());
+      allow delete: if isValidId(eventId) && isFamilyMember();
     }
 
     // 5. TaskTemplates collection
     match /taskTemplates/{templateId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(templateId) && isVerified() && isValidTaskTemplate(incoming());
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(templateId) && isFamilyMember() && isValidTaskTemplate(incoming());
       allow delete: if isValidId(templateId) && isAdmin();
     }
 
     // 6. TaskInstances collection
     match /taskInstances/{instanceId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create: if isValidId(instanceId) && isVerified() && isValidTaskInstance(incoming());
-      allow update: if isValidId(instanceId) && isVerified() && isValidTaskInstance(incoming()) && (
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create: if isValidId(instanceId) && isFamilyMember() && isValidTaskInstance(incoming());
+      allow update: if isValidId(instanceId) && isFamilyMember() && isValidTaskInstance(incoming()) && (
         isAdmin() ||
         incoming().diff(existing()).affectedKeys().hasOnly([
           'status', 'claimedByMemberId', 'claimedByName', 'claimedAt',
@@ -164,9 +175,9 @@ service cloud.firestore {
 
     // 7. Settings collection
     match /settings/{settingsId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(settingsId) && isVerified() && isValidSettings(incoming());
+      allow get: if isFamilyMember();
+      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(settingsId) && isFamilyMember() && isValidSettings(incoming());
       allow delete: if false;
     }
   }

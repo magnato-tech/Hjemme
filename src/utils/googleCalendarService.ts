@@ -77,11 +77,10 @@ declare global {
   }
 }
 
-import firebaseConfig from '../../firebase-applet-config.json';
+import { firebaseConfig } from '../lib/firebaseConfig';
 
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
-// Provisioned OAuth client ID from AI Studio & Google Cloud
-const DEFAULT_CLIENT_ID = firebaseConfig.oAuthClientId || '212775398640-0945dho7drjn01kgdt6f9c5najre5aet.apps.googleusercontent.com';
+const DEFAULT_CLIENT_ID = firebaseConfig.oAuthClientId;
 
 export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',

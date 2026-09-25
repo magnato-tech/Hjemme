@@ -2,7 +2,9 @@
 
 ## 1. Data Invariants
 - **Family Scoping (`familyId`)**: All entities (`members`, `vehicles`, `reservations`, `calendarEvents`, `taskTemplates`, `taskInstances`, `settings`) belong to a bounded family domain (`familyId: 'totland'`). Unscoped reads or queries cannot access cross-tenant records.
+- **Family Member Allowlist**: Only verified Google accounts listed in `familyEmails()` inside `firestore.rules` may read or write family data. Arbitrary signed-in users are denied.
 - **Admin Privilege & Immutability**: Critical schema modifications (creating task templates, deleting vehicles, modifying global car rules) are reserved for verified household admins (`magnar.totland@gmail.com`).
+- **Secrets Management**: Firebase credentials live in `.env` (gitignored), not in committed JSON config files.
 - **Identity Integrity**: Users cannot claim or complete tasks or reserve vehicles on behalf of non-existent identities.
 - **State Transition Guard**: A task cannot transition from `completed` backwards to `available` without authorization.
 - **String and List Bounds**: String lengths and list counts must not exceed defined limits to prevent resource exhaustion attacks.
