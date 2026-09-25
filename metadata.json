@@ -1,0 +1,8 @@
+{
+  "name": "Remix HomeApp",
+  "description": "Moderne og familievennlig webapp for koordinering av familiebil, kalender og husoppgaver med automatisk oppgavestyring og smarte bilregler.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

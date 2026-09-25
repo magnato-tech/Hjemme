@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "FamilyMember": {
+      "title": "FamilyMember",
+      "description": "A member of the household with assigned role and permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "adult", "child"] },
+        "avatarColor": { "type": "string", "maxLength": 50 },
+        "avatarEmoji": { "type": "string", "maxLength": 10 },
+        "weeklyPointsGoal": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "canReserveCar": { "type": "boolean" },
+        "canManageTasks": { "type": "boolean" },
+        "canManageFamily": { "type": "boolean" },
+        "email": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "name", "role", "weeklyPointsGoal", "isActive"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "A family vehicle available for reservation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "licensePlate": { "type": "string", "maxLength": 30 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "isAvailable": { "type": "boolean" },
+        "color": { "type": "string", "maxLength": 50 },
+        "fuelType": { "type": "string", "enum": ["electric", "hybrid", "petrol", "diesel"] },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "name", "ownerId", "isAvailable"]
+    },
+    "CarReservation": {
+      "title": "CarReservation",
+      "description": "A reservation of a vehicle with buffer times and status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "vehicleId": { "type": "string", "maxLength": 128 },
+        "memberId": { "type": "string", "maxLength": 128 },
+        "memberName": { "type": "string", "maxLength": 100 },
+        "startTime": { "type": "string", "maxLength": 50 },
+        "endTime": { "type": "string", "maxLength": 50 },
+        "purpose": { "type": "string", "maxLength": 250 },
+        "isWorkRelated": { "type": "boolean" },
+        "source": { "type": "string", "enum": ["manual", "google_calendar", "recurrence"] },
+        "calendarEventId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["confirmed", "pending_conflict", "cancelled"] },
+        "location": { "type": "string", "maxLength": 150 },
+        "bufferBeforeMinutes": { "type": "number" },
+        "bufferAfterMinutes": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "vehicleId", "memberId", "startTime", "endTime", "purpose", "status"]
+    },
+    "CalendarEvent": {
+      "title": "CalendarEvent",
+      "description": "A family or personal calendar event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "memberId": { "type": "string", "maxLength": 128 },
+        "memberName": { "type": "string", "maxLength": 100 },
+        "calendarId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "startTime": { "type": "string", "maxLength": 50 },
+        "endTime": { "type": "string", "maxLength": 50 },
+        "location": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "isWorkRelated": { "type": "boolean" },
+        "createsCarReservation": { "type": "boolean" },
+        "vehicleReservationId": { "type": "string", "maxLength": 128 },
+        "bufferBeforeMinutes": { "type": "number" },
+        "bufferAfterMinutes": { "type": "number" },
+        "googleEventId": { "type": "string", "maxLength": 256 },
+        "googleCalendarId": { "type": "string", "maxLength": 256 },
+        "htmlLink": { "type": "string", "maxLength": 500 },
+        "isSyncedWithGoogle": { "type": "boolean" },
+        "lastSyncedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "memberId", "title", "startTime", "endTime"]
+    },
+    "TaskTemplate": {
+      "title": "TaskTemplate",
+      "description": "A template for recurring or one-off chores",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "area": { "type": "string", "maxLength": 100 },
+        "room": { "type": "string", "maxLength": 100 },
+        "points": { "type": "number" },
+        "recurrence": { "type": "string", "enum": ["weekly", "biweekly", "monthly", "daily", "once"] },
+        "deadlineDay": { "type": "string", "maxLength": 50 },
+        "eligibleMemberIds": { "type": "array" },
+        "isActive": { "type": "boolean" },
+        "isMandatory": { "type": "boolean" },
+        "iconName": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "title", "points", "recurrence", "isActive"]
+    },
+    "TaskInstance": {
+      "title": "TaskInstance",
+      "description": "An actual task instance for a specific week",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "templateId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "area": { "type": "string", "maxLength": 100 },
+        "room": { "type": "string", "maxLength": 100 },
+        "points": { "type": "number" },
+        "weekNumber": { "type": "number" },
+        "year": { "type": "number" },
+        "status": { "type": "string", "enum": ["available", "claimed", "in_progress", "completed", "overdue"] },
+        "claimedByMemberId": { "type": "string", "maxLength": 128 },
+        "claimedByName": { "type": "string", "maxLength": 100 },
+        "claimedAt": { "type": "string", "maxLength": 50 },
+        "completedAt": { "type": "string", "maxLength": 50 },
+        "completedByMemberId": { "type": "string", "maxLength": 128 },
+        "completedByName": { "type": "string", "maxLength": 100 },
+        "deadlineDate": { "type": "string", "maxLength": 50 },
+        "iconName": { "type": "string", "maxLength": 50 },
+        "isMandatory": { "type": "boolean" }
+      },
+      "required": ["id", "templateId", "title", "points", "weekNumber", "year", "status"]
+    },
+    "FamilySettings": {
+      "title": "FamilySettings",
+      "description": "Family-wide configuration and automation rules",
+      "type": "object",
+      "properties": {
+        "familyName": { "type": "string", "maxLength": 100 },
+        "carPriorityRule": { "type": "string", "maxLength": 500 },
+        "defaultTravelBufferBefore": { "type": "number" },
+        "defaultTravelBufferAfter": { "type": "number" },
+        "autoApproveWorkTrips": { "type": "boolean" },
+        "weekStartDay": { "type": "number" }
+      },
+      "required": ["familyName"]
+    }
+  },
+  "firestore": {
+    "/members/{memberId}": {
+      "schema": "FamilyMember",
+      "description": "Collection of family members and their roles"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Collection of vehicles registered for the family"
+    },
+    "/reservations/{reservationId}": {
+      "schema": "CarReservation",
+      "description": "Car reservation bookings and time slots"
+    },
+    "/calendarEvents/{eventId}": {
+      "schema": "CalendarEvent",
+      "description": "Calendar events synced or manually created"
+    },
+    "/taskTemplates/{templateId}": {
+      "schema": "TaskTemplate",
+      "description": "Templates for recurring and one-time tasks"
+    },
+    "/taskInstances/{instanceId}": {
+      "schema": "TaskInstance",
+      "description": "Weekly task instances and completion tracking"
+    },
+    "/settings/{settingsId}": {
+      "schema": "FamilySettings",
+      "description": "Household configuration and rules"
+    }
+  }
+}

@@ -1,0 +1,173 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connectivity test document
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // Global hardened primitives & helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerified() && request.auth.token.email == 'magnar.totland@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Blueprint for FamilyMember
+    function isValidMember(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.role in ['admin', 'adult', 'child'] &&
+             data.weeklyPointsGoal is number && data.weeklyPointsGoal >= 0 &&
+             data.isActive is bool &&
+             data.familyId == 'totland';
+    }
+
+    // Validation Blueprint for Vehicle
+    function isValidVehicle(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.ownerId is string && data.ownerId.size() <= 128 &&
+             data.isAvailable is bool &&
+             data.familyId == 'totland';
+    }
+
+    // Validation Blueprint for CarReservation
+    function isValidReservation(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.vehicleId is string && data.vehicleId.size() <= 128 &&
+             data.memberId is string && data.memberId.size() <= 128 &&
+             data.startTime is string && data.startTime.size() <= 50 &&
+             data.endTime is string && data.endTime.size() <= 50 &&
+             data.purpose is string && data.purpose.size() <= 250 &&
+             data.status in ['confirmed', 'pending_conflict', 'cancelled'] &&
+             data.familyId == 'totland';
+    }
+
+    // Validation Blueprint for CalendarEvent
+    function isValidCalendarEvent(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.memberId is string && data.memberId.size() <= 128 &&
+             data.title is string && data.title.size() <= 150 &&
+             data.startTime is string && data.startTime.size() <= 50 &&
+             data.endTime is string && data.endTime.size() <= 50 &&
+             data.familyId == 'totland';
+    }
+
+    // Validation Blueprint for TaskTemplate
+    function isValidTaskTemplate(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 100 &&
+             data.points is number && data.points >= 0 && data.points <= 50 &&
+             data.recurrence in ['weekly', 'biweekly', 'monthly', 'daily', 'once'] &&
+             data.isActive is bool &&
+             data.familyId == 'totland';
+    }
+
+    // Validation Blueprint for TaskInstance
+    function isValidTaskInstance(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.templateId is string && data.templateId.size() <= 128 &&
+             data.title is string && data.title.size() <= 100 &&
+             data.points is number && data.points >= 0 && data.points <= 50 &&
+             data.weekNumber is number && data.weekNumber >= 1 && data.weekNumber <= 53 &&
+             data.year is number &&
+             data.status in ['available', 'claimed', 'in_progress', 'completed', 'overdue'] &&
+             data.familyId == 'totland';
+    }
+
+    // Validation Blueprint for FamilySettings
+    function isValidSettings(data) {
+      return data.familyName is string && data.familyName.size() <= 100 &&
+             data.familyId == 'totland';
+    }
+
+    // 1. Members collection
+    match /members/{memberId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(memberId) && isVerified() && isValidMember(incoming());
+      allow delete: if isValidId(memberId) && isAdmin();
+    }
+
+    // 2. Vehicles collection
+    match /vehicles/{vehicleId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(vehicleId) && isVerified() && isValidVehicle(incoming());
+      allow delete: if isValidId(vehicleId) && isAdmin();
+    }
+
+    // 3. Reservations collection
+    match /reservations/{reservationId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create: if isValidId(reservationId) && isVerified() && isValidReservation(incoming());
+      allow update: if isValidId(reservationId) && isVerified() && isValidReservation(incoming()) && incoming().memberId == existing().memberId;
+      allow delete: if isValidId(reservationId) && isVerified() && (existing().memberId == request.auth.uid || isAdmin());
+    }
+
+    // 4. CalendarEvents collection
+    match /calendarEvents/{eventId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(eventId) && isVerified() && isValidCalendarEvent(incoming());
+      allow delete: if isValidId(eventId) && isVerified();
+    }
+
+    // 5. TaskTemplates collection
+    match /taskTemplates/{templateId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(templateId) && isVerified() && isValidTaskTemplate(incoming());
+      allow delete: if isValidId(templateId) && isAdmin();
+    }
+
+    // 6. TaskInstances collection
+    match /taskInstances/{instanceId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create: if isValidId(instanceId) && isVerified() && isValidTaskInstance(incoming());
+      allow update: if isValidId(instanceId) && isVerified() && isValidTaskInstance(incoming()) && (
+        isAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'claimedByMemberId', 'claimedByName', 'claimedAt',
+          'completedAt', 'completedByMemberId', 'completedByName'
+        ])
+      );
+      allow delete: if isValidId(instanceId) && isAdmin();
+    }
+
+    // 7. Settings collection
+    match /settings/{settingsId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.familyId == 'totland';
+      allow create, update: if isValidId(settingsId) && isVerified() && isValidSettings(incoming());
+      allow delete: if false;
+    }
+  }
+}
