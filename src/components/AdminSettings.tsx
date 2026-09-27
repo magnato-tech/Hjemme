@@ -42,6 +42,7 @@ import {
 } from '../utils/taskUtils';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
 import { isCalendarDisabled } from '../utils/calendarVisibility';
+import { isFirebaseConfigured } from '../lib/firebaseConfig';
 
 export const AdminSettings: React.FC = () => {
   const {
@@ -1743,7 +1744,9 @@ export const AdminSettings: React.FC = () => {
                         ? 'Firestore er tilkoblet og synkroniserer i sanntid'
                         : firebaseUser
                         ? 'Kobler til Firestore...'
-                        : 'Lokal modus (Logg inn med Google for å aktivere skysynk)'}
+                        : isFirebaseConfigured
+                        ? 'Lokal modus (Logg inn med Google for å aktivere skysynk)'
+                        : 'Lokal modus (Firebase-nøkler er ikke lagt inn i .env)'}
                     </h4>
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
@@ -1789,10 +1792,15 @@ export const AdminSettings: React.FC = () => {
                   ) : (
                     <button
                       onClick={async () => {
+                        if (!isFirebaseConfigured) {
+                          showNotification('ℹ️ Firebase er ikke konfigurert i dette miljøet. Legg til nøkler i .env.');
+                          return;
+                        }
                         await signInWithFirebaseGoogle();
                         showNotification('✅ Innlogget med Google! Sanntidssynk er aktiv.');
                       }}
-                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold shadow-xs flex items-center gap-2 transition-all"
+                      disabled={!isFirebaseConfigured}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-bold shadow-xs flex items-center gap-2 transition-all"
                     >
                       <LogIn className="w-4 h-4" />
                       <span>Logg inn med Google</span>

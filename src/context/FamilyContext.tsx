@@ -481,6 +481,13 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     let unsubs: (() => void)[] = [];
 
+    if (!auth) {
+      setIsFirebaseAuthReady(true);
+      setIsFirestoreConnected(false);
+      setIsFirestoreSyncing(false);
+      return;
+    }
+
     const authUnsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
       setIsFirebaseAuthReady(true);
