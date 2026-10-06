@@ -1688,11 +1688,20 @@ export const AdminSettings: React.FC = () => {
                           showNotification('⚠️ Vennligst oppgi en gyldig Kalender-ID eller iCal-adresse');
                           return;
                         }
-                        addCustomGoogleCalendar(trimmedId, trimmedName, customCalendarColorInput);
+                        void addCustomGoogleCalendar(trimmedId, trimmedName, customCalendarColorInput).then((result) => {
+                          if (result.error) {
+                            showNotification(`⚠️ «${trimmedName}» er lagret, men hendelsene kom ikke inn: ${result.error}`);
+                            return;
+                          }
+                          if (result.importedCount > 0) {
+                            showNotification(`✅ La til «${trimmedName}» med ${result.importedCount} hendelser i familiekalenderen`);
+                            return;
+                          }
+                          showNotification(`✅ La til «${trimmedName}» i kalenderlisten`);
+                        });
                         setCustomCalendarIdInput('');
                         setCustomCalendarNameInput('');
                         setShowCustomCalendarInput(false);
-                        showNotification(`✅ La til «${trimmedName}» i kalenderlisten!`);
                       }}
                       className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
                     >

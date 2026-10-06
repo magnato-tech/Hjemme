@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useFamily } from '../../context/FamilyContext';
 import { toDatetimeLocal } from '../../utils/dateUtils';
 import { X, CalendarClock, Car, MapPin } from '../Icons';
+import { NorwegianDateTimeInput } from '../NorwegianDateTimeInput';
 
 interface AddCalendarEventModalProps {
   isOpen: boolean;
@@ -182,11 +183,10 @@ export const AddCalendarEventModal: React.FC<AddCalendarEventModalProps> = ({ is
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Starttidspunkt
               </label>
-              <input
-                type="datetime-local"
+              <NorwegianDateTimeInput
                 required
                 value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
+                onChange={setStartTime}
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 text-slate-800 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 bg-white/70 backdrop-blur-xs shadow-2xs"
               />
             </div>
@@ -195,11 +195,10 @@ export const AddCalendarEventModal: React.FC<AddCalendarEventModalProps> = ({ is
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Sluttidspunkt
               </label>
-              <input
-                type="datetime-local"
+              <NorwegianDateTimeInput
                 required
                 value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
+                onChange={setEndTime}
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 text-slate-800 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500 bg-white/70 backdrop-blur-xs shadow-2xs"
               />
             </div>

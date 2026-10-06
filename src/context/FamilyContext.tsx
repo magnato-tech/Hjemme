@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth, signInWithGoogle, logoutFirebase } from '../lib/firebase';
 import {
@@ -62,6 +62,7 @@ import {
   getWeekNumber,
   getPointsWeekStart,
   formatLocalDateKey,
+  isReservationBackwards,
 } from '../utils/dateUtils';
 import {
   buildWeeklyPointsRecord,
@@ -89,6 +90,8 @@ import {
   evaluateCalendarEventCarReservation,
   sanitizeGoogleCalendarId,
 } from '../utils/googleCalendarService';
+import { isIcalAddress, normalizeIcalUrl } from '../utils/icalFeed';
+import { migrateCalendarSettings, normalizeActivityOverrides } from '../utils/carOverrideUtils';
 
 interface FamilyContextType {
   // Active member (the user viewing the app)
@@ -148,7 +151,11 @@ interface FamilyContextType {
   refreshGoogleCalendars: () => Promise<GoogleCalendarItem[]>;
   setSelectedGoogleCalendar: (calendarId: string, calendarName?: string) => Promise<void>;
   updateGoogleCalendarConfig: (updates: Partial<GoogleCalendarConfig>) => Promise<void>;
-  addCustomGoogleCalendar: (id: string, name: string, color?: string) => Promise<void>;
+  addCustomGoogleCalendar: (
+    id: string,
+    name: string,
+    color?: string
+  ) => Promise<{ importedCount: number; error?: string }>;
   updateGoogleCalendarName: (id: string, newName: string) => Promise<void>;
   toggleCalendarViewVisibility: (id: string, visible: boolean) => Promise<void>;
   toggleCalendarDisabled: (id: string, active: boolean) => Promise<void>;
@@ -384,7 +391,24 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
         if (parsed.taskTemplates) setTaskTemplates(migrateTaskTemplates(parsed.taskTemplates));
         if (parsed.taskInstances) setTaskInstances(parsed.taskInstances);
-        if (parsed.settings) setSettings(parsed.settings);
+        if (parsed.settings) {
+          const migratedSettings = migrateCalendarSettings(parsed.settings);
+          setSettings(migratedSettings);
+          if (migratedSettings.savedCalendars?.length) {
+            setAvailableGoogleCalendars((prev) =>
+              mergeCalendarsList(
+                prev,
+                migratedSettings.savedCalendars,
+                migratedSettings.googleCalendarConfig,
+                migratedSettings.disableMockData,
+                migratedSettings.disabledCalendarIds,
+                migratedSettings.deletedCalendarIds,
+                migratedSettings.carCalendarIds,
+                migratedSettings.calendarPrivacyModes
+              )
+            );
+          }
+        }
         if (parsed.weeklyPointsRecords) setWeeklyPointsRecords(parsed.weeklyPointsRecords);
         if (parsed.activeMemberId) setActiveMemberId(parsed.activeMemberId);
       }
@@ -393,6 +417,23 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     setIsLoaded(true);
   }, []);
+
+  const feedsImported = useRef(false);
+  useEffect(() => {
+    if (!isLoaded || feedsImported.current) return;
+    const feeds = (settings.savedCalendars || []).filter(
+      (cal) => cal.icalUrl && !(settings.disabledCalendarIds || []).includes(cal.id)
+    );
+    if (feeds.length === 0) return;
+    const alreadyShown = (calId: string) =>
+      calendarEvents.some((ev) => ev.calendarId === calId || ev.googleCalendarId === calId);
+    if (feeds.every((cal) => alreadyShown(cal.id))) {
+      feedsImported.current = true;
+      return;
+    }
+    feedsImported.current = true;
+    void syncTwoWayWithGoogle();
+  }, [isLoaded]);
 
   // Save to localStorage when state updates
   useEffect(() => {
@@ -772,6 +813,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const createCarReservation = (
     reservationData: Omit<CarReservation, 'id' | 'createdAt'>
   ) => {
+    if (isReservationBackwards(new Date(reservationData.startTime), new Date(reservationData.endTime))) {
+      return { success: false, conflicts: [] as CarReservation[] };
+    }
+
     const { isAvailable, conflicts } = checkCarAvailability(
       reservationData.startTime,
       reservationData.endTime,
@@ -927,17 +972,22 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   };
 
-  const addCustomGoogleCalendar = async (id: string, name: string, color?: string): Promise<void> => {
+  const addCustomGoogleCalendar = async (
+    id: string,
+    name: string,
+    color?: string
+  ): Promise<{ importedCount: number; error?: string }> => {
     const rawInput = id.trim();
-    if (!rawInput) return;
+    if (!rawInput) return { importedCount: 0 };
 
-    const cleanId = sanitizeGoogleCalendarId(rawInput) || rawInput;
-    const isUrl = rawInput.startsWith('http://') || rawInput.startsWith('https://') || rawInput.includes('.ics');
+    const normalizedInput = normalizeIcalUrl(rawInput);
+    const cleanId = sanitizeGoogleCalendarId(normalizedInput) || normalizedInput;
+    const isUrl = isIcalAddress(normalizedInput);
     const trimmedName = name.trim() || cleanId;
 
     const newCal: GoogleCalendarItem = {
       id: cleanId,
-      icalUrl: isUrl ? rawInput : undefined,
+      icalUrl: isUrl ? normalizedInput : undefined,
       summary: trimmedName,
       customName: trimmedName,
       description: `Tilpasset kalender (${cleanId})`,
@@ -952,7 +1002,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!currentConfigs[cleanId]) {
       currentConfigs[cleanId] = {
         calendarId: cleanId,
-        icalUrl: isUrl ? rawInput : undefined,
+        icalUrl: isUrl ? normalizedInput : undefined,
         customName: trimmedName,
         privacyMode: 'full',
         carMode: 'all',
@@ -979,6 +1029,31 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     if (firebaseUser) {
       await saveSettingsToFirestore(newSettings).catch(console.error);
+    }
+
+    if (!isUrl) return { importedCount: 0 };
+
+    try {
+      const res = await executeTwoWayCalendarSync({
+        icalUrl: normalizedInput,
+        localEvents: calendarEvents,
+        localReservations: reservations,
+        members,
+        targetMemberId: activeMember.id,
+        calendarId: cleanId,
+        settings: newSettings,
+        vehicleId: activeVehicle.id,
+      });
+      setCalendarEvents(res.events);
+      if (res.newReservations.length > 0) {
+        setReservations((prev) => [...res.newReservations, ...prev]);
+      }
+      setGoogleSyncStatusMessage(res.message);
+      return { importedCount: res.importedCount };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Kunne ikke hente kalenderen.';
+      setGoogleSyncStatusMessage(`Kunne ikke hente «${trimmedName}»: ${message}`);
+      return { importedCount: 0, error: message };
     }
   };
 
@@ -1183,6 +1258,13 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ...updates,
       calendarId: targetId,
     };
+    const effectiveCarMode = updatedConfig.carMode === 'none' ? 'none' : 'all';
+    if (updatedConfig.activityOverrides) {
+      updatedConfig.activityOverrides = normalizeActivityOverrides(
+        updatedConfig.activityOverrides,
+        effectiveCarMode
+      );
+    }
 
     if (targetId !== id) {
       delete currentCalendarConfigs[id];
@@ -1310,6 +1392,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const evalResult = evaluateCalendarEventCarReservation({
           title: ev.title,
           location: ev.location,
+          eventId: ev.googleEventId || ev.id,
           calendarConfig: updatedConfig,
           defaultCarMode: 'work_only',
           defaultVehicleId: targetVehicle,
@@ -1758,29 +1841,32 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const syncTwoWayWithGoogle = async (targetMemberId: string = 'member_magnar'): Promise<SyncResult | null> => {
-    const token = googleAccessToken || localStorage.getItem('gcal_access_token');
-    if (!token) {
-      // Connect first if not connected
+    const token = googleAccessToken || localStorage.getItem('gcal_access_token') || undefined;
+    const listedCalendars = availableGoogleCalendars
+      .filter((c) => !(settings.disabledCalendarIds || []).includes(c.id))
+      .map((c) => ({
+        id: c.id,
+        name: c.customName || c.summary,
+        assignedMemberId: c.assignedMemberId || settings.calendarConfigs?.[c.id]?.assignedMemberId,
+        icalUrl: c.icalUrl || settings.calendarConfigs?.[c.id]?.icalUrl,
+      }));
+    const feedCalendars = listedCalendars.filter((c) => c.icalUrl);
+
+    if (!token && feedCalendars.length === 0) {
       const connected = await connectGoogleCalendar();
       if (!connected) return null;
       return null;
     }
 
+    const calendarsToSync = token
+      ? listedCalendars.length > 0
+        ? listedCalendars
+        : [{ id: settings.googleCalendarConfig?.calendarId || 'primary', name: 'Primærkalender' }]
+      : feedCalendars;
+
     try {
       setIsTwoWaySyncing(true);
-      setGoogleSyncStatusMessage('Synkroniserer hendelser med Google Kalender...');
-
-      const activeCalendars = availableGoogleCalendars
-        .filter((c) => !(settings.disabledCalendarIds || []).includes(c.id))
-        .map((c) => ({
-          id: c.id,
-          name: c.customName || c.summary,
-          assignedMemberId: c.assignedMemberId,
-        }));
-
-      const calendarsToSync = activeCalendars.length > 0
-        ? activeCalendars
-        : [{ id: settings.googleCalendarConfig?.calendarId || 'primary', name: 'Primærkalender' }];
+      setGoogleSyncStatusMessage('Henter hendelser fra kalenderne...');
 
       const multiResult = await executeMultiCalendarSync({
         accessToken: token,

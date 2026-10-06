@@ -161,6 +161,42 @@ export function isToday(d: Date | string): boolean {
   return isSameDay(d, new Date());
 }
 
+/** True when a time range overlaps any part of a calendar day (local time). */
+export function overlapsCalendarDay(
+  startTime: string | Date,
+  endTime: string | Date,
+  day: Date | string
+): boolean {
+  const dayDate = parseLocalDate(day);
+  const dayStart = new Date(dayDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayDate);
+  dayEnd.setHours(23, 59, 59, 999);
+  return checkTimeCollision(startTime, endTime, dayStart, dayEnd);
+}
+
+/** Future or still ongoing — used to hide past events from suggestion lists. */
+export function isEventFutureOrActive(
+  startTime: string,
+  endTime?: string,
+  now = new Date()
+): boolean {
+  if (endTime) {
+    const end = new Date(endTime).getTime();
+    if (!Number.isNaN(end)) {
+      return end >= now.getTime();
+    }
+  }
+  if (startTime) {
+    const start = new Date(startTime).getTime();
+    if (!Number.isNaN(start)) {
+      if (start >= now.getTime()) return true;
+      if (isSameDay(startTime, now) && !endTime) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Adds minutes to an ISO string or Date and returns ISO string
  */
@@ -237,6 +273,179 @@ export function toDatetimeLocal(d: Date = new Date()): string {
   const hours = pad(d.getHours());
   const minutes = pad(d.getMinutes());
   return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+/** Splits a datetime-local value (YYYY-MM-DDTHH:mm) into date and time parts. */
+export function splitDatetimeLocal(value: string): { date: string; time: string } {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(value);
+  if (!match) return { date: '', time: '' };
+  return { date: match[1], time: match[2] };
+}
+
+/** dd/mm/yyyy from a datetime-local value. */
+export function formatNorwegianDateInput(value: string): string {
+  const { date } = splitDatetimeLocal(value);
+  if (!date) return '';
+  const [year, month, day] = date.split('-');
+  return `${day}/${month}/${year}`;
+}
+
+/** HH:mm (24-hour) from a datetime-local value. */
+export function formatNorwegianTimeInput(value: string): string {
+  return splitDatetimeLocal(value).time;
+}
+
+/** Parses dd/mm/yyyy text to YYYY-MM-DD, or null when invalid. */
+export function parseNorwegianDateInput(text: string): string | null {
+  const trimmed = text.trim();
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+  if (!match) return null;
+
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const d = new Date(year, month - 1, day);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+    return null;
+  }
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+/** Parses HH:mm text to a normalized time string, or null when invalid. */
+export function parseNorwegianTimeInput(text: string): string | null {
+  const trimmed = text.trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}`;
+}
+
+/** Combines ISO date and HH:mm into datetime-local format. */
+export function combineDatetimeLocal(dateIso: string, time: string): string {
+  return `${dateIso}T${time}`;
+}
+
+/** Builds datetime-local from Norwegian date/time text when both parts are valid. */
+export function tryBuildDatetimeLocal(dateText: string, timeText: string): string | null {
+  const dateIso = parseNorwegianDateInput(dateText);
+  const time = parseNorwegianTimeInput(timeText);
+  if (!dateIso || !time) return null;
+  return combineDatetimeLocal(dateIso, time);
+}
+
+/** dd/mm/yyyy HH:mm for datetime-local input display (24-hour, day first). */
+export function formatNorwegianDateTimeInput(value: string): string {
+  if (!value) return '';
+  const datePart = formatNorwegianDateInput(value);
+  const timePart = formatNorwegianTimeInput(value);
+  if (datePart && timePart) return `${datePart} ${timePart}`;
+  const d = parseLocalDate(value);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
+export function truncateToMinute(date: Date): Date {
+  const copy = new Date(date);
+  copy.setSeconds(0, 0);
+  return copy;
+}
+
+/** A start in an earlier minute than now is already in the past. */
+export function isStartInThePast(start: Date, now = new Date()): boolean {
+  return truncateToMinute(start).getTime() < truncateToMinute(now).getTime();
+}
+
+/** End must be strictly after start. Equal or earlier is a backwards booking. */
+export function isReservationBackwards(start: Date, end: Date): boolean {
+  return Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime();
+}
+
+export function suggestedReservationEnd(start: Date, hours = 1): Date {
+  return new Date(start.getTime() + hours * ONE_HOUR_MS);
+}
+
+export type ReservationTimeIssue = 'past' | 'backwards';
+
+export function reservationTimeIssue(
+  start: Date,
+  end: Date,
+  now = new Date()
+): ReservationTimeIssue | null {
+  if (isStartInThePast(start, now)) return 'past';
+  if (isReservationBackwards(start, end)) return 'backwards';
+  return null;
+}
+
+export function reservationTimeMessage(issue: ReservationTimeIssue): string {
+  if (issue === 'past') {
+    return 'Du kan ikke bestille et tidspunkt som allerede har vært.';
+  }
+  return 'Slutten må være etter starten. Reservasjonen kan ikke gå bakover i tid.';
+}
+
+/** Default start/end pair for car request forms (start = now, end = +1h). */
+export function defaultCarRequestTimes(now = new Date()): { start: string; end: string } {
+  const start = truncateToMinute(now);
+  return {
+    start: toDatetimeLocal(start),
+    end: toDatetimeLocal(suggestedReservationEnd(start)),
+  };
+}
+
+/** Next conflict-free 1h window after existing reservations (for form reset after booking). */
+export function nextAvailableCarRequestTimes(
+  existingReservations: Array<{ startTime: string; endTime: string; id: string; status?: string }>,
+  now = new Date()
+): { start: string; end: string } {
+  let start = truncateToMinute(now);
+  const maxAttempts = 168;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const end = suggestedReservationEnd(start);
+    const conflicts = findConflictingReservations(
+      start.toISOString(),
+      end.toISOString(),
+      existingReservations
+    );
+
+    if (conflicts.length === 0) {
+      return {
+        start: toDatetimeLocal(start),
+        end: toDatetimeLocal(end),
+      };
+    }
+
+    const jumpTo = conflicts.reduce(
+      (latest, conflict) => Math.max(latest, new Date(conflict.endTime).getTime()),
+      start.getTime()
+    );
+    const nextStart = truncateToMinute(new Date(jumpTo));
+    if (nextStart.getTime() <= start.getTime()) {
+      nextStart.setMinutes(nextStart.getMinutes() + 15);
+    }
+    start = nextStart;
+  }
+
+  return defaultCarRequestTimes(now);
+}
+
+/** 16:30 today when that is still ahead, otherwise the current minute. */
+export function defaultCarRequestStart(now = new Date()): Date {
+  const preferred = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 30, 0, 0);
+  if (!isStartInThePast(preferred, now)) return preferred;
+  return truncateToMinute(now);
 }
 
 export function fromDatetimeLocal(val: string): Date {

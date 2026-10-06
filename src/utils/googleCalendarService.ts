@@ -12,6 +12,7 @@ import {
   CalendarCarMode,
 } from '../types';
 import { calculateBufferedTime } from './dateUtils';
+import { fetchIcalText, parseIcalEvents } from './icalFeed';
 
 export interface GoogleCalendarEventItem {
   id: string;
@@ -438,6 +439,7 @@ export interface EventCarEvaluationResult {
 export function evaluateCalendarEventCarReservation(params: {
   title: string;
   location?: string;
+  eventId?: string;
   calendarConfig?: PerCalendarConfig;
   defaultCarMode?: 'all' | 'work_only' | 'none';
   defaultVehicleId?: string;
@@ -448,6 +450,7 @@ export function evaluateCalendarEventCarReservation(params: {
   const {
     title = '',
     location = '',
+    eventId,
     calendarConfig,
     defaultCarMode = 'work_only',
     defaultVehicleId,
@@ -466,11 +469,23 @@ export function evaluateCalendarEventCarReservation(params: {
   const targetVehicleId =
     calendarConfig?.targetVehicleId || defaultVehicleId;
 
-  // 1. Highest Priority: Specific Activity Overrides (Blokk 5)
+  // 1. One event, then every event with the same name. Both win over the calendar mode.
   if (calendarConfig?.activityOverrides) {
     const overrides = Object.values(calendarConfig.activityOverrides);
+    if (eventId) {
+      const single = overrides.find((ov) => ov?.eventId && ov.eventId === eventId);
+      if (single) {
+        return {
+          shouldCreateCar: single.blocksCar,
+          bufferBefore: single.bufferBeforeMinutes ?? bufferBefore,
+          bufferAfter: single.bufferAfterMinutes ?? bufferAfter,
+          targetVehicleId: single.targetVehicleId || targetVehicleId,
+          matchedRule: `Enkelthendelse: «${single.activityTitle}» (${single.blocksCar ? 'Sperrer bil' : 'Sperrer ikke bil'})`,
+        };
+      }
+    }
     for (const ov of overrides) {
-      if (!ov || !ov.activityTitle) continue;
+      if (!ov || !ov.activityTitle || ov.eventId) continue;
       const ovTitle = ov.activityTitle.trim().toLowerCase();
       if (ovTitle && (normalizedTitle === ovTitle || normalizedTitle.includes(ovTitle))) {
         return {
@@ -478,7 +493,7 @@ export function evaluateCalendarEventCarReservation(params: {
           bufferBefore: ov.bufferBeforeMinutes ?? bufferBefore,
           bufferAfter: ov.bufferAfterMinutes ?? bufferAfter,
           targetVehicleId: ov.targetVehicleId || targetVehicleId,
-          matchedRule: `Aktivitetsoverstyring: «${ov.activityTitle}» (${ov.blocksCar ? 'Sperrer bil' : 'Sperrer IKKE bil'})`,
+          matchedRule: `Gjentakende aktivitet: «${ov.activityTitle}» (${ov.blocksCar ? 'Sperrer bil' : 'Sperrer ikke bil'})`,
         };
       }
     }
@@ -575,7 +590,8 @@ export function evaluateCalendarEventCarReservation(params: {
  * Perform bi-directional 2-way synchronization
  */
 export async function executeTwoWayCalendarSync(params: {
-  accessToken: string;
+  accessToken?: string;
+  icalUrl?: string;
   localEvents: CalendarEvent[];
   localReservations: CarReservation[];
   members: FamilyMember[];
@@ -586,6 +602,7 @@ export async function executeTwoWayCalendarSync(params: {
 }): Promise<SyncResult> {
   const {
     accessToken,
+    icalUrl,
     localEvents,
     localReservations,
     members,
@@ -609,8 +626,10 @@ export async function executeTwoWayCalendarSync(params: {
   let updatedCount = 0;
   let deletedCount = 0;
 
-  // 1. Fetch remote Google Calendar events from the chosen calendar (Pull)
-  const remoteEvents = await fetchGoogleCalendarEvents(accessToken, targetCalendarId);
+  // An iCal address is read as a file. Other calendars need a Google login.
+  const remoteEvents = icalUrl
+    ? parseIcalEvents(await fetchIcalText(icalUrl))
+    : await fetchGoogleCalendarEvents(accessToken || '', targetCalendarId);
 
   const updatedEventsMap = new Map<string, CalendarEvent>();
   localEvents.forEach((ev) => updatedEventsMap.set(ev.id, { ...ev }));
@@ -685,6 +704,7 @@ export async function executeTwoWayCalendarSync(params: {
     const carEval = evaluateCalendarEventCarReservation({
       title,
       location,
+      eventId: remote.id,
       calendarConfig: perCal,
       defaultCarMode: filterMode,
       defaultVehicleId: targetVehicleId,
@@ -738,7 +758,8 @@ export async function executeTwoWayCalendarSync(params: {
       updatedEventsMap.set(existingLocal.id, existingLocal);
     } else {
       // Create new local event from Google Calendar
-      const eventId = `cal_g_${remote.id.substring(0, 12)}_${Date.now()}`;
+      const eventSlug = remote.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40) || 'hendelse';
+      const eventId = `cal_g_${eventSlug}_${importedCount}`;
 
       let reservationId: string | undefined;
 
@@ -829,10 +850,11 @@ export interface MultiCalendarSyncItem {
   id: string;
   name?: string;
   assignedMemberId?: string;
+  icalUrl?: string;
 }
 
 export interface MultiCalendarSyncParams {
-  accessToken: string;
+  accessToken?: string;
   localEvents: CalendarEvent[];
   localReservations: CarReservation[];
   members: FamilyMember[];
@@ -893,9 +915,19 @@ export async function executeMultiCalendarSync(
     if (!cleanId) continue;
 
     const calLabel = cal.name || cleanId;
+    if (!cal.icalUrl && !accessToken) {
+      resultsByCalendar.push({
+        calendarId: cleanId,
+        calendarName: calLabel,
+        importedCount: 0,
+        error: 'Logg inn med Google, eller legg inn en iCal-adresse.',
+      });
+      continue;
+    }
     try {
       const res = await executeTwoWayCalendarSync({
         accessToken,
+        icalUrl: cal.icalUrl,
         localEvents: Array.from(updatedEventsMap.values()),
         localReservations,
         members,

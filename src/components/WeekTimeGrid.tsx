@@ -41,6 +41,9 @@ const HOURS = Array.from(
 );
 
 const MIN_GRID_HEIGHT = WEEK_GRID_HOUR_COUNT * WEEK_GRID_MIN_HOUR_PX;
+/** Shared column template so header and body stay pixel-aligned (incl. with scrollbar). */
+const WEEK_GRID_COLS =
+  'grid grid-cols-[3rem_repeat(7,minmax(0,1fr))] min-w-[640px] w-full';
 
 export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
   events,
@@ -123,74 +126,76 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
         </button>
       </div>
 
-      <div className="shrink-0 grid grid-cols-[3rem_repeat(7,minmax(0,1fr))] border-b border-slate-200/60 bg-white/90 min-w-[640px]">
-        <div className="border-r border-slate-200/50" />
-        {weekDates.map((date, idx) => {
-          const today = isToday(date);
-          return (
-            <div
-              key={idx}
-              className={`py-2 text-center border-r border-slate-200/50 last:border-r-0 ${
-                today ? 'bg-sky-50/80' : ''
-              }`}
-            >
-              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
-                {dayNamesShort[idx]}
-              </div>
-              <div
-                className={`mt-0.5 inline-flex items-center justify-center w-7 h-7 text-sm font-bold rounded-full ${
-                  today ? 'bg-sky-600 text-white' : 'text-slate-800'
-                }`}
-              >
-                {date.getDate()}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {hasAllDayEvents && (
-        <div className="shrink-0 grid grid-cols-[3rem_repeat(7,minmax(0,1fr))] border-b border-slate-200/60 bg-slate-50/50 min-w-[640px]">
-          <div className="flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase border-r border-slate-200/50 px-1">
-            Hele dagen
-          </div>
-          {eventsByDay.map(({ date, allDay }, dayIdx) => (
-            <div
-              key={dayIdx}
-              className={`p-1 min-h-[1.75rem] border-r border-slate-200/50 last:border-r-0 space-y-0.5 ${
-                isToday(date) ? 'bg-sky-50/40' : ''
-              }`}
-            >
-              {allDay.map((ev) => {
-                const color = getEventColor(ev);
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="min-w-[640px]">
+          <div className="sticky top-0 z-30 border-b border-slate-200/60 bg-white/95 backdrop-blur-sm">
+            <div className={`${WEEK_GRID_COLS} border-b border-slate-200/60`}>
+              <div className="border-r border-slate-200/50" />
+              {weekDates.map((date, idx) => {
+                const today = isToday(date);
                 return (
                   <div
-                    key={ev.id}
-                    className="text-[10px] px-1.5 py-0.5 rounded truncate font-medium text-slate-800"
-                    style={{
-                      backgroundColor: `${color}22`,
-                      borderLeft: `3px solid ${color}`,
-                    }}
-                    title={getDisplayEventTitle(ev)}
+                    key={idx}
+                    className={`py-2 text-center border-r border-slate-200/50 last:border-r-0 ${
+                      today ? 'bg-sky-50/80' : ''
+                    }`}
                   >
-                    {getDisplayEventTitle(ev)}
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                      {dayNamesShort[idx]}
+                    </div>
+                    <div
+                      className={`mt-0.5 inline-flex items-center justify-center w-7 h-7 text-sm font-bold rounded-full ${
+                        today ? 'bg-sky-600 text-white' : 'text-slate-800'
+                      }`}
+                    >
+                      {date.getDate()}
+                    </div>
                   </div>
                 );
               })}
             </div>
-          ))}
-        </div>
-      )}
 
-      <div className="flex-1 min-h-0 overflow-auto">
-        <div
-          className="relative grid grid-cols-[3rem_repeat(7,minmax(0,1fr))] min-w-[640px]"
-          style={{
-            minHeight: '100%',
-            height: `max(100%, ${MIN_GRID_HEIGHT}px)`,
-            gridTemplateRows: `repeat(${WEEK_GRID_HOUR_COUNT}, minmax(${WEEK_GRID_MIN_HOUR_PX}px, 1fr))`,
-          }}
-        >
+            {hasAllDayEvents && (
+              <div className={`${WEEK_GRID_COLS} bg-slate-50/90 border-b border-slate-200/60`}>
+                <div className="flex items-center justify-center text-[9px] font-bold text-slate-400 uppercase border-r border-slate-200/50 px-1">
+                  Hele dagen
+                </div>
+                {eventsByDay.map(({ date, allDay }, dayIdx) => (
+                  <div
+                    key={dayIdx}
+                    className={`p-1 min-h-[1.75rem] border-r border-slate-200/50 last:border-r-0 space-y-0.5 ${
+                      isToday(date) ? 'bg-sky-50/40' : ''
+                    }`}
+                  >
+                    {allDay.map((ev) => {
+                      const color = getEventColor(ev);
+                      return (
+                        <div
+                          key={ev.id}
+                          className="text-[10px] px-1.5 py-0.5 rounded truncate font-medium text-slate-800"
+                          style={{
+                            backgroundColor: `${color}22`,
+                            borderLeft: `3px solid ${color}`,
+                          }}
+                          title={getDisplayEventTitle(ev)}
+                        >
+                          {getDisplayEventTitle(ev)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div
+            className={`relative ${WEEK_GRID_COLS}`}
+            style={{
+              minHeight: MIN_GRID_HEIGHT,
+              gridTemplateRows: `repeat(${WEEK_GRID_HOUR_COUNT}, minmax(${WEEK_GRID_MIN_HOUR_PX}px, 1fr))`,
+            }}
+          >
           {HOURS.map((hour, rowIdx) => (
             <div
               key={`time-${hour}`}
@@ -303,6 +308,7 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
               </div>
             );
           })}
+          </div>
         </div>
       </div>
     </div>

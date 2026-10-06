@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useFamily } from '../context/FamilyContext';
 import {
   Car,
@@ -14,7 +14,20 @@ import {
   Zap,
   Lock,
 } from './Icons';
-import { formatNorwegianDate, formatTime, formatTimeRange, toDatetimeLocal } from '../utils/dateUtils';
+import { NorwegianDateTimeInput } from './NorwegianDateTimeInput';
+import {
+  defaultCarRequestTimes,
+  formatNorwegianDate,
+  formatTime,
+  formatTimeRange,
+  isEventFutureOrActive,
+  nextAvailableCarRequestTimes,
+  reservationTimeIssue,
+  reservationTimeMessage,
+  suggestedReservationEnd,
+  toDatetimeLocal,
+  truncateToMinute,
+} from '../utils/dateUtils';
 
 interface CarModuleProps {
   onOpenReserveCar: () => void;
@@ -32,23 +45,49 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
     settings,
   } = useFamily();
 
-  // Test reservation interactive playground right on the car page
-  const now = new Date();
-  const defStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 30);
-  const defEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0);
-
-  const [testStart, setTestStart] = useState(toDatetimeLocal(defStart));
-  const [testEnd, setTestEnd] = useState(toDatetimeLocal(defEnd));
+  // Test reservation interactive playground right on the car page.
+  // End follows the start with a one-hour suggestion until the user edits the end.
+  const [testStart, setTestStart] = useState(() => defaultCarRequestTimes().start);
+  const [testEnd, setTestEnd] = useState(() => defaultCarRequestTimes().end);
+  const [endEdited, setEndEdited] = useState(false);
   const [testPurpose, setTestPurpose] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [reservationTab, setReservationTab] = useState<'active' | 'archive'>('active');
 
-  const availabilityCheck = checkCarAvailability(
-    new Date(testStart).toISOString(),
-    new Date(testEnd).toISOString()
-  );
+  const timeIssue = reservationTimeIssue(new Date(testStart), new Date(testEnd));
+  const availabilityCheck = timeIssue
+    ? { isAvailable: false, conflicts: [] as ReturnType<typeof checkCarAvailability>['conflicts'] }
+    : checkCarAvailability(new Date(testStart).toISOString(), new Date(testEnd).toISOString());
+
+  const handleStartChange = (value: string) => {
+    setTestStart(value);
+    if (!endEdited && value) {
+      const start = new Date(value);
+      if (!Number.isNaN(start.getTime())) {
+        setTestEnd(toDatetimeLocal(suggestedReservationEnd(start)));
+      }
+    }
+  };
+
+  // Keep start >= now so min on the picker does not lock the field when time passes.
+  useEffect(() => {
+    const syncStartWithNow = () => {
+      const nowMin = toDatetimeLocal(truncateToMinute(new Date()));
+      if (testStart && testStart < nowMin) {
+        setTestStart(nowMin);
+        if (!endEdited) {
+          setTestEnd(toDatetimeLocal(suggestedReservationEnd(new Date(nowMin))));
+        }
+      }
+    };
+    syncStartWithNow();
+    const id = window.setInterval(syncStartWithNow, 60_000);
+    return () => window.clearInterval(id);
+  }, [testStart, endEdited]);
 
   const handleQuickBook = (e: React.FormEvent) => {
     e.preventDefault();
+    if (reservationTimeIssue(new Date(testStart), new Date(testEnd))) return;
     const res = createCarReservation({
       vehicleId: activeVehicle.id,
       memberId: activeMember.id,
@@ -63,15 +102,49 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
 
     if (res.success) {
       setFeedback('✅ Bilen ble reservert uten konflikter!');
-    } else {
+    } else if (res.reservation) {
       setFeedback('⚠️ Reservasjon lagt inn (konflikt registrert).');
+    }
+    if (res.reservation) {
+      const vehicleReservations = [
+        ...reservations.filter(
+          (r) => r.vehicleId === activeVehicle.id && r.status !== 'cancelled'
+        ),
+        res.reservation,
+      ];
+      const fresh = nextAvailableCarRequestTimes(vehicleReservations);
+      setTestStart(fresh.start);
+      setTestEnd(fresh.end);
+      setEndEdited(false);
+      setTestPurpose('');
     }
     setTimeout(() => setFeedback(null), 3000);
   };
 
-  const sortedReservations = [...reservations].sort(
-    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+  const activeReservations = useMemo(
+    () =>
+      reservations
+        .filter(
+          (res) =>
+            res.status !== 'cancelled' && isEventFutureOrActive(res.startTime, res.endTime)
+        )
+        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()),
+    [reservations]
   );
+
+  const archivedReservations = useMemo(
+    () =>
+      reservations
+        .filter(
+          (res) =>
+            res.status !== 'cancelled' && !isEventFutureOrActive(res.startTime, res.endTime)
+        )
+        .sort((a, b) => new Date(b.endTime).getTime() - new Date(a.endTime).getTime()),
+    [reservations]
+  );
+
+  const displayedReservations =
+    reservationTab === 'active' ? activeReservations : archivedReservations;
 
   return (
     <div className="space-y-6 pb-20 md:pb-8">
@@ -105,12 +178,8 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
         </button>
       </div>
 
-      {/* Grid: Live Availability Checker & Priority Rules */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Quick Check & Request form (Left, 6 cols) */}
-        <div className="lg:col-span-6 space-y-6">
-          <div className="backdrop-blur-md bg-white/60 rounded-3xl p-6 border border-white/60 shadow-sm">
+      {/* Quick Check & Request form — full width */}
+      <div className="backdrop-blur-md bg-white/60 rounded-3xl p-6 border border-white/60 shadow-sm">
             <div className="flex items-center space-x-2 pb-4 border-b border-slate-200/50">
               <Clock className="w-5 h-5 text-slate-700" />
               <div>
@@ -124,15 +193,15 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
                 Logget inn som: <span className="font-bold text-slate-900">{activeMember.name} {activeMember.avatarEmoji}</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">
                     Ønsket start
                   </label>
-                  <input
-                    type="datetime-local"
+                  <NorwegianDateTimeInput
                     value={testStart}
-                    onChange={(e) => setTestStart(e.target.value)}
+                    min={toDatetimeLocal(truncateToMinute(new Date()))}
+                    onChange={handleStartChange}
                     className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 bg-white/70 backdrop-blur-xs text-sm focus:outline-hidden focus:ring-2 focus:ring-orange-500 shadow-2xs"
                   />
                 </div>
@@ -140,10 +209,13 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
                   <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">
                     Ønsket slutt
                   </label>
-                  <input
-                    type="datetime-local"
+                  <NorwegianDateTimeInput
                     value={testEnd}
-                    onChange={(e) => setTestEnd(e.target.value)}
+                    min={testStart}
+                    onChange={(value) => {
+                      setEndEdited(true);
+                      setTestEnd(value);
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 bg-white/70 backdrop-blur-xs text-sm focus:outline-hidden focus:ring-2 focus:ring-orange-500 shadow-2xs"
                   />
                 </div>
@@ -165,12 +237,19 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
               {/* Real-time feedback badge */}
               <div
                 className={`p-4 rounded-2xl border transition-all shadow-2xs backdrop-blur-xs ${
-                  availabilityCheck.isAvailable
-                    ? 'bg-emerald-50/80 border-emerald-200/80 text-emerald-900'
-                    : 'bg-orange-50/80 border-orange-200/80 text-orange-900'
+                  timeIssue
+                    ? 'bg-orange-50/80 border-orange-200/80 text-orange-900'
+                    : availabilityCheck.isAvailable
+                      ? 'bg-emerald-50/80 border-emerald-200/80 text-emerald-900'
+                      : 'bg-orange-50/80 border-orange-200/80 text-orange-900'
                 }`}
               >
-                {availabilityCheck.isAvailable ? (
+                {timeIssue ? (
+                  <div className="flex items-start space-x-3">
+                    <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                    <p className="font-bold text-sm">{reservationTimeMessage(timeIssue)}</p>
+                  </div>
+                ) : availabilityCheck.isAvailable ? (
                   <div className="flex items-start space-x-3">
                     <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                     <div>
@@ -203,86 +282,64 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
 
               <button
                 type="submit"
-                className={`w-full py-3 rounded-2xl font-bold text-sm shadow-xs transition-all ${
-                  availabilityCheck.isAvailable
-                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                    : 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white border border-orange-400/30'
+                disabled={timeIssue !== null}
+                className={`w-full py-3 rounded-2xl font-bold text-sm shadow-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                  timeIssue
+                    ? 'bg-slate-400 text-white'
+                    : availabilityCheck.isAvailable
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      : 'bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white border border-orange-400/30'
                 }`}
               >
-                {availabilityCheck.isAvailable ? 'Reserver bilen nå' : 'Reserver likevel (med konfliktvarsel)'}
+                {timeIssue
+                  ? 'Velg et gyldig tidsrom'
+                  : availabilityCheck.isAvailable
+                    ? 'Reserver bilen nå'
+                    : 'Reserver likevel (med konfliktvarsel)'}
               </button>
             </form>
-          </div>
-        </div>
-
-        {/* Car Priority Rules (Right, 6 cols) */}
-        <div className="lg:col-span-6 space-y-6">
-          <div className="backdrop-blur-md bg-white/60 rounded-3xl p-6 border border-white/60 shadow-sm">
-            <div className="flex items-center space-x-2 pb-4 border-b border-slate-200/50">
-              <Shield className="w-5 h-5 text-slate-700" />
-              <div>
-                <h2 className="text-base font-bold text-slate-900">Familiens bilregler & prioritering</h2>
-                <p className="text-xs text-slate-500">Konfigurert for minst mulig diskusjon</p>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-3.5">
-              <div className="p-4 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block mb-1">
-                  1. Hovedregel: Jobb & Møter (Prioritet 1)
-                </span>
-                <p className="text-xs text-slate-700 leading-relaxed">
-                  Magnars jobbrelaterte kalenderhendelser reserverer bilen automatisk.
-                  Systemet legger automatisk til <strong>{settings.defaultTravelBufferBefore} minutter før</strong> og{' '}
-                  <strong>{settings.defaultTravelBufferAfter} minutter etter</strong> for kjøring og parkering.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block mb-1">
-                  2. Frihet for øvrige familiemedlemmer
-                </span>
-                <p className="text-xs text-slate-700 leading-relaxed">
-                  Alle familiemedlemmer kan fritt bruke bilen når den ikke er opptatt av prioriterte avtaler. Først til mølla-prinsippet gjelder for private ærend.
-                </p>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
-                    3. Integrert Google-kalender
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
-                    {settings.googleCalendarConfig?.calendarName || 'Magnar Totland (Primær)'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-700 leading-relaxed">
-                  {(settings.googleCalendarConfig?.autoReserveCar ?? true)
-                    ? `Avtaler i aktive bilkalendere sperrer automatisk bilen med kalenderens reisetidsbuffer (f.eks. +40m før og etter), unntatt faste gjentagende aktiviteter som er satt til «Sperrer IKKE bil».`
-                    : 'Automatisk bilsperre fra kalender er deaktivert i Admin-innstillinger.'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
       </div>
 
-      {/* Full Reservations List */}
+      {/* Reservations List */}
       <div className="backdrop-blur-md bg-white/60 rounded-3xl p-6 border border-white/60 shadow-sm">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-200/50">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200/50">
           <div>
-            <h2 className="text-base font-bold text-slate-900">Alle aktive bilreservasjoner</h2>
-            <p className="text-xs text-slate-500">Planlagte turer og automatiske kalendersperrer</p>
+            <h2 className="text-base font-bold text-slate-900">Bilreservasjoner</h2>
+            <p className="text-xs text-slate-500">
+              {reservationTab === 'active'
+                ? 'Fremtidige og pågående turer og kalendersperrer'
+                : 'Tidligere reservasjoner som er avsluttet'}
+            </p>
           </div>
-          <span className="text-xs font-bold px-3 py-1 bg-white/80 backdrop-blur-xs text-slate-700 rounded-xl border border-white/60 shadow-2xs">
-            {sortedReservations.length} reservasjoner
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setReservationTab('active')}
+              className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                reservationTab === 'active'
+                  ? 'bg-orange-50 text-orange-900 border-orange-200 shadow-2xs'
+                  : 'bg-white/80 text-slate-600 border-slate-200/80 hover:bg-white'
+              }`}
+            >
+              Aktive ({activeReservations.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setReservationTab('archive')}
+              className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                reservationTab === 'archive'
+                  ? 'bg-slate-100 text-slate-900 border-slate-300 shadow-2xs'
+                  : 'bg-white/80 text-slate-600 border-slate-200/80 hover:bg-white'
+              }`}
+            >
+              Arkiv ({archivedReservations.length})
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 divide-y divide-slate-200/40">
-          {sortedReservations.length > 0 ? (
-            sortedReservations.map((res) => (
+          {displayedReservations.length > 0 ? (
+            displayedReservations.map((res) => (
               <div key={res.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2 flex-wrap gap-y-1">
@@ -342,9 +399,60 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
             ))
           ) : (
             <div className="py-8 text-center text-sm text-slate-400">
-              Ingen fremtidige reservasjoner registrert for bilen.
+              {reservationTab === 'active'
+                ? 'Ingen fremtidige reservasjoner registrert for bilen.'
+                : 'Ingen tidligere reservasjoner i arkivet.'}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Family car rules — bottom */}
+      <div className="backdrop-blur-md bg-white/60 rounded-3xl p-6 border border-white/60 shadow-sm">
+        <div className="flex items-center space-x-2 pb-4 border-b border-slate-200/50">
+          <Shield className="w-5 h-5 text-slate-700" />
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Familiens bilregler & prioritering</h2>
+            <p className="text-xs text-slate-500">Konfigurert for minst mulig diskusjon</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          <div className="p-4 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block mb-1">
+              1. Hovedregel: Jobb & Møter (Prioritet 1)
+            </span>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              Magnars jobbrelaterte kalenderhendelser reserverer bilen automatisk.
+              Systemet legger automatisk til <strong>{settings.defaultTravelBufferBefore} minutter før</strong> og{' '}
+              <strong>{settings.defaultTravelBufferAfter} minutter etter</strong> for kjøring og parkering.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block mb-1">
+              2. Frihet for øvrige familiemedlemmer
+            </span>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              Alle familiemedlemmer kan fritt bruke bilen når den ikke er opptatt av prioriterte avtaler. Først til mølla-prinsippet gjelder for private ærend.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white/50 backdrop-blur-xs border border-white/60 shadow-2xs">
+            <div className="flex items-center justify-between mb-1 gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                3. Integrert Google-kalender
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 shrink-0">
+                {settings.googleCalendarConfig?.calendarName || 'Magnar Totland (Primær)'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              {(settings.googleCalendarConfig?.autoReserveCar ?? true)
+                ? `Avtaler i aktive bilkalendere sperrer automatisk bilen med kalenderens reisetidsbuffer (f.eks. +40m før og etter), unntatt faste gjentagende aktiviteter som er satt til «Sperrer IKKE bil».`
+                : 'Automatisk bilsperre fra kalender er deaktivert i Admin-innstillinger.'}
+            </p>
+          </div>
         </div>
       </div>
     </div>

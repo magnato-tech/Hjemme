@@ -165,6 +165,8 @@ export interface ActivityOverride {
   bufferBeforeMinutes?: number;
   bufferAfterMinutes?: number;
   targetVehicleId?: string;
+  /** Set for one event only. Without it, the rule applies to every event with this name. */
+  eventId?: string;
 }
 
 export interface PerCalendarConfig {

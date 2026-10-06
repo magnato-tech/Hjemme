@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useFamily } from '../../context/FamilyContext';
-import { formatNorwegianDate, toDatetimeLocal } from '../../utils/dateUtils';
+import {
+  reservationTimeIssue,
+  reservationTimeMessage,
+  suggestedReservationEnd,
+  toDatetimeLocal,
+  truncateToMinute,
+} from '../../utils/dateUtils';
 import { Car, AlertTriangle, CheckCircle2, X } from '../Icons';
+import { NorwegianDateTimeInput } from '../NorwegianDateTimeInput';
 
 interface ReserveCarModalProps {
   isOpen: boolean;
@@ -19,16 +26,15 @@ export const ReserveCarModal: React.FC<ReserveCarModalProps> = ({
   const { activeMember, activeVehicle, createCarReservation, checkCarAvailability, members } = useFamily();
 
   const now = new Date();
-  const defaultStart = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour from now
-  const defaultEnd = new Date(now.getTime() + 3 * 60 * 60 * 1000); // 3 hours from now
+  const defaultStart = truncateToMinute(new Date(now.getTime() + 60 * 60 * 1000));
+  const resolvedStart = initialStartTime || toDatetimeLocal(defaultStart);
 
   const [memberId, setMemberId] = useState(activeMember.id);
-  const [startTime, setStartTime] = useState(
-    initialStartTime || toDatetimeLocal(defaultStart)
-  );
+  const [startTime, setStartTime] = useState(resolvedStart);
   const [endTime, setEndTime] = useState(
-    initialEndTime || toDatetimeLocal(defaultEnd)
+    initialEndTime || toDatetimeLocal(suggestedReservationEnd(new Date(resolvedStart)))
   );
+  const [endEdited, setEndEdited] = useState(Boolean(initialEndTime));
   const [purpose, setPurpose] = useState('');
   const [isWorkRelated, setIsWorkRelated] = useState(false);
   const [location, setLocation] = useState('');
@@ -49,17 +55,44 @@ export const ReserveCarModal: React.FC<ReserveCarModalProps> = ({
     }
   }, [startTime, endTime, checkCarAvailability]);
 
+  useEffect(() => {
+    const syncStartWithNow = () => {
+      const nowMin = toDatetimeLocal(truncateToMinute(new Date()));
+      if (startTime && startTime < nowMin) {
+        setStartTime(nowMin);
+        if (!endEdited) {
+          setEndTime(toDatetimeLocal(suggestedReservationEnd(new Date(nowMin))));
+        }
+      }
+    };
+    syncStartWithNow();
+    const id = window.setInterval(syncStartWithNow, 60_000);
+    return () => window.clearInterval(id);
+  }, [startTime, endEdited]);
+
+  const handleStartChange = (value: string) => {
+    setStartTime(value);
+    if (!endEdited && value) {
+      const start = new Date(value);
+      if (!Number.isNaN(start.getTime())) {
+        setEndTime(toDatetimeLocal(suggestedReservationEnd(start)));
+      }
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleQuickPreset = (hours: number) => {
     const s = new Date(startTime || new Date());
-    const e = new Date(s.getTime() + hours * 60 * 60 * 1000);
-    setEndTime(toDatetimeLocal(e));
+    setEndEdited(true);
+    setEndTime(toDatetimeLocal(suggestedReservationEnd(s, hours)));
   };
+
+  const timeIssue = reservationTimeIssue(new Date(startTime), new Date(endTime));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!startTime || !endTime) return;
+    if (!startTime || !endTime || timeIssue) return;
 
     const startIso = new Date(startTime).toISOString();
     const endIso = new Date(endTime).toISOString();
@@ -147,10 +180,10 @@ export const ReserveCarModal: React.FC<ReserveCarModalProps> = ({
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Fra tidspunkt
               </label>
-              <input
-                type="datetime-local"
+              <NorwegianDateTimeInput
                 value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
+                min={toDatetimeLocal(truncateToMinute(new Date()))}
+                onChange={handleStartChange}
                 required
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 text-slate-800 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 bg-white/70 backdrop-blur-xs shadow-2xs"
               />
@@ -159,10 +192,13 @@ export const ReserveCarModal: React.FC<ReserveCarModalProps> = ({
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Til tidspunkt
               </label>
-              <input
-                type="datetime-local"
+              <NorwegianDateTimeInput
                 value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
+                min={startTime}
+                onChange={(value) => {
+                  setEndEdited(true);
+                  setEndTime(value);
+                }}
                 required
                 className="w-full px-3.5 py-2.5 rounded-2xl border border-white/80 text-slate-800 text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 bg-white/70 backdrop-blur-xs shadow-2xs"
               />
@@ -229,12 +265,17 @@ export const ReserveCarModal: React.FC<ReserveCarModalProps> = ({
           {/* Live Availability Status Box */}
           <div
             className={`p-4 rounded-2xl border backdrop-blur-xs flex items-start space-x-3 text-sm shadow-2xs ${
-              availability.isAvailable
-                ? 'bg-emerald-50/90 border-emerald-200/80 text-emerald-950'
-                : 'bg-amber-50/90 border-amber-200/80 text-amber-950'
+              timeIssue || !availability.isAvailable
+                ? 'bg-amber-50/90 border-amber-200/80 text-amber-950'
+                : 'bg-emerald-50/90 border-emerald-200/80 text-emerald-950'
             }`}
           >
-            {availability.isAvailable ? (
+            {timeIssue ? (
+              <>
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <p className="font-bold">{reservationTimeMessage(timeIssue)}</p>
+              </>
+            ) : availability.isAvailable ? (
               <>
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                 <div>
@@ -279,13 +320,20 @@ export const ReserveCarModal: React.FC<ReserveCarModalProps> = ({
             </button>
             <button
               type="submit"
-              className={`px-6 py-2.5 rounded-2xl text-sm font-bold text-white shadow-xs transition-all ${
-                availability.isAvailable
-                  ? 'bg-emerald-600 hover:bg-emerald-700'
-                  : 'bg-amber-600 hover:bg-amber-700'
+              disabled={timeIssue !== null}
+              className={`px-6 py-2.5 rounded-2xl text-sm font-bold text-white shadow-xs transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                timeIssue
+                  ? 'bg-slate-400'
+                  : availability.isAvailable
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-amber-600 hover:bg-amber-700'
               }`}
             >
-              {availability.isAvailable ? 'Bekreft reservasjon' : 'Send reservasjon med varsel'}
+              {timeIssue
+                ? 'Velg et gyldig tidsrom'
+                : availability.isAvailable
+                  ? 'Bekreft reservasjon'
+                  : 'Send reservasjon med varsel'}
             </button>
           </div>
         </form>

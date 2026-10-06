@@ -31,10 +31,12 @@ import {
   formatTimeRange,
   formatShortDate,
   formatLocalDateKey,
+  isEventFutureOrActive,
   isSameDay,
   isToday,
 } from '../utils/dateUtils';
 import { CalendarEvent, GoogleCalendarItem } from '../types';
+import { buildCalendarDayItems } from '../utils/carCalendarDayItems';
 import { WeekTimeGrid } from './WeekTimeGrid';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
 import { SAMPLE_GOOGLE_CALENDARS } from '../utils/googleCalendarService';
@@ -56,6 +58,12 @@ import {
   isCalendarDisabled,
   isCalendarVisibleInView,
 } from '../utils/calendarVisibility';
+import {
+  exceptionBlocksCar,
+  normalizeActivityOverrides,
+  hasSeriesException,
+  hasSingleException,
+} from '../utils/carOverrideUtils';
 
 interface CalendarModuleProps {
   onOpenAddEvent?: () => void;
@@ -71,6 +79,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     syncCalendar,
     syncTwoWayWithGoogle,
     deleteCalendarEvent,
+    cancelReservation,
     settings,
     updateSettings,
     members,
@@ -94,6 +103,69 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
   const [selectedCalForModal, setSelectedCalForModal] = useState<GoogleCalendarItem | null>(null);
   const [showPastEvents, setShowPastEvents] = useState<boolean>(false);
+
+  const applyCarException = async (ev: CalendarEvent, scope: 'one' | 'all') => {
+    const calId = ev.googleCalendarId || ev.calendarId;
+    const title = (ev.title || '').trim();
+    if (!calId || !title) return;
+    const config = settings.calendarConfigs?.[calId];
+    const carMode = config?.carMode === 'none' ? 'none' : 'all';
+    const overrides = { ...(config?.activityOverrides || {}) };
+    const eventId = ev.googleEventId || ev.id;
+    const key = scope === 'one' ? `event:${eventId}` : title.toLowerCase();
+    const hasException =
+      scope === 'one'
+        ? hasSingleException(overrides, eventId, carMode)
+        : hasSeriesException(overrides, title, carMode);
+    if (hasException) {
+      delete overrides[key];
+    } else {
+      overrides[key] = {
+        activityTitle: title,
+        blocksCar: exceptionBlocksCar(carMode),
+        ...(scope === 'one' ? { eventId } : {}),
+      };
+    }
+    await updateCalendarSettings(calId, {
+      activityOverrides: normalizeActivityOverrides(overrides, carMode),
+    });
+  };
+
+  const carExceptionButtons = (ev: CalendarEvent) => {
+    const config = getEventCalendarConfig(ev, settings.calendarConfigs);
+    if (!config || config.carMode === undefined) return null;
+    const carMode = config.carMode === 'none' ? 'none' : 'all';
+    const eventId = ev.googleEventId || ev.id;
+    const title = (ev.title || '').trim();
+    const singleOn = hasSingleException(config.activityOverrides, eventId, carMode);
+    const seriesOn = title ? hasSeriesException(config.activityOverrides, title, carMode) : false;
+    return (
+      <div className="flex flex-wrap gap-1.5 pt-1">
+        <button
+          type="button"
+          onClick={() => applyCarException(ev, 'one')}
+          className="text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 hover:border-blue-300 cursor-pointer"
+        >
+          {singleOn
+            ? 'Tilbake til standard'
+            : carMode === 'none'
+              ? 'Sperr denne'
+              : 'Ikke sperr denne'}
+        </button>
+        <button
+          type="button"
+          onClick={() => applyCarException(ev, 'all')}
+          className="text-[10px] font-bold px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 hover:border-blue-300 cursor-pointer"
+        >
+          {seriesOn
+            ? 'Tilbake til standard'
+            : carMode === 'none'
+              ? 'Sperr alle med dette navnet'
+              : 'Ikke sperr noen med navnet'}
+        </button>
+      </div>
+    );
+  };
 
   // Month navigation helpers
   const year = currentDate.getFullYear();
@@ -283,9 +355,18 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
         settings,
         allCalendars,
         weekDates,
-        (calId) => isCalendarActiveForCarCheck(calId)
+        (calId) => isCalendarActiveForCarCheck(calId),
+        reservations
       ),
-    [carSpanSourceEvents, settings, allCalendars, weekDates, disabledCalIds, settings.calendarViewHiddenIds]
+    [
+      carSpanSourceEvents,
+      settings,
+      allCalendars,
+      weekDates,
+      reservations,
+      disabledCalIds,
+      settings.calendarViewHiddenIds,
+    ]
   );
 
   const monthCarOccupiedDateKeys = useMemo(
@@ -296,7 +377,8 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
             settings,
             allCalendars,
             calendarCells.map((cell) => cell.date),
-            (calId) => isCalendarActiveForCarCheck(calId)
+            (calId) => isCalendarActiveForCarCheck(calId),
+            reservations
           )
         : new Set<string>(),
     [
@@ -305,41 +387,27 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
       settings,
       allCalendars,
       calendarCells,
+      reservations,
       disabledCalIds,
       settings.calendarViewHiddenIds,
     ]
   );
 
-  // Helper to determine if an event is in the future or active/ongoing
-  const isFutureOrActiveEvent = (ev: CalendarEvent): boolean => {
-    const now = new Date();
-    if (ev.endTime) {
-      const endTime = new Date(ev.endTime).getTime();
-      if (!isNaN(endTime)) {
-        return endTime >= now.getTime();
-      }
-    }
-    if (ev.startTime) {
-      const startTime = new Date(ev.startTime).getTime();
-      if (!isNaN(startTime)) {
-        if (startTime >= now.getTime()) {
-          return true;
-        }
-        if (isSameDay(ev.startTime, now) && !ev.endTime) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
-
-  const upcomingEvents = sortedEvents.filter(isFutureOrActiveEvent);
+  const upcomingEvents = sortedEvents.filter((ev) =>
+    isEventFutureOrActive(ev.startTime, ev.endTime)
+  );
   const pastEventsCount = sortedEvents.length - upcomingEvents.length;
   const displayedAgendaEvents = showPastEvents ? sortedEvents : upcomingEvents;
 
-  // Events for the selected date (timezone-safe comparison)
-  const selectedDateEvents = sortedEvents.filter((ev) =>
-    isSameDay(ev.startTime, selectedDate)
+  const selectedDayItems = useMemo(
+    () =>
+      buildCalendarDayItems(
+        sortedEvents,
+        reservations,
+        selectedDate,
+        selectedMemberFilter
+      ),
+    [sortedEvents, reservations, selectedDate, selectedMemberFilter]
   );
 
   const getEventCalendarColor = (event: CalendarEvent): string => {
@@ -354,7 +422,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
   const handleTriggerSync = async () => {
     const res = await syncTwoWayWithGoogle();
     if (res) {
-      setFeedbackToast(`✅ Synk fullført: ${res.syncedFromGoogleCount} fra Google, ${res.pushedToGoogleCount} sendt`);
+      setFeedbackToast(res.message || `Synk fullført: ${res.importedCount} hendelser`);
       setTimeout(() => setFeedbackToast(null), 4000);
     }
   };
@@ -655,15 +723,109 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                     {formatNorwegianDate(selectedDate)}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    {selectedDateEvents.length} hendelse(r) registrert
+                    {selectedDayItems.length} hendelse(r) registrert
                   </p>
                 </div>
               </div>
 
               {/* Event list for selected date */}
               <div className="space-y-3">
-                {selectedDateEvents.length > 0 ? (
-                  selectedDateEvents.map((ev) => {
+                {selectedDayItems.length > 0 ? (
+                  selectedDayItems.map((item) => {
+                    if (item.kind === 'reservation') {
+                      const res = item.reservation;
+                      const vehicle = vehicles.find((v) => v.id === res.vehicleId);
+
+                      return (
+                        <div
+                          key={res.id}
+                          className="p-4 rounded-2xl bg-white/70 backdrop-blur-xs border border-white/80 shadow-2xs space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-bold text-slate-900">
+                                  {res.memberName}
+                                </span>
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-orange-100 text-orange-900 border border-orange-300 flex items-center gap-1">
+                                  <Car className="w-2.5 h-2.5 text-orange-700" />
+                                  Bil reservert
+                                </span>
+                                {res.isWorkRelated && !res.isConfidential && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                    Jobb
+                                  </span>
+                                )}
+                                {res.source === 'google_calendar' && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-sky-100 text-sky-800 border border-sky-200">
+                                    Fra kalender
+                                  </span>
+                                )}
+                                {res.status === 'pending_conflict' && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                                    Konflikt
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-bold text-slate-900 text-sm mt-0.5">
+                                {res.isConfidential ? 'Opptatt' : res.purpose}
+                              </h4>
+                            </div>
+
+                            <button
+                              onClick={() => cancelReservation(res.id)}
+                              className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors"
+                              title="Avbestill reservasjon"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="text-xs text-slate-600 space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="font-semibold text-slate-800">
+                                {formatTimeRange(res.startTime, res.endTime)}
+                              </span>
+                            </div>
+
+                            {res.location && !res.isConfidential && (
+                              <div className="flex items-center gap-1.5">
+                                <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                                <span>{res.location}</span>
+                              </div>
+                            )}
+
+                            {vehicle && (
+                              <div className="flex items-center gap-1.5">
+                                <Car className="w-3.5 h-3.5 text-slate-400" />
+                                <span>{vehicle.name}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="p-2.5 rounded-xl bg-orange-50/90 border border-orange-200 text-orange-950 text-xs space-y-0.5">
+                            <div className="font-bold flex items-center gap-1 text-orange-900">
+                              <Car className="w-3.5 h-3.5 text-orange-600" />
+                              <span>
+                                {res.source === 'manual'
+                                  ? 'Manuell bilreservasjon'
+                                  : 'Bil reservert automatisk'}
+                              </span>
+                            </div>
+                            {(res.bufferBeforeMinutes || res.bufferAfterMinutes) && (
+                              <p className="text-[11px] text-orange-800">
+                                Reisetid:{' '}
+                                <strong>{res.bufferBeforeMinutes || 0}m</strong> før og{' '}
+                                <strong>{res.bufferAfterMinutes || 0}m</strong> etter
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const ev = item.event;
                     const evConfig = getEventCalendarConfig(ev, settings.calendarConfigs);
                     const displayTitle = getDisplayEventTitle(ev, evConfig);
                     const displayLocation = getDisplayEventLocation(ev, evConfig);
@@ -733,6 +895,8 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                           </div>
                         )}
                       </div>
+
+                      {carExceptionButtons(ev)}
 
                       {/* Auto Car Reservation Details */}
                       {ev.createsCarReservation && (
@@ -1078,6 +1242,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                         </span>
                       </div>
                     )}
+                    {carExceptionButtons(ev)}
                   </div>
 
                   <div className="flex items-center space-x-2 self-end sm:self-center">

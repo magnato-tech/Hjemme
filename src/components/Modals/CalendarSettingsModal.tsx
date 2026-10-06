@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Check,
@@ -25,7 +25,18 @@ import {
   ActivityOverride,
 } from '../../types';
 import { useFamily } from '../../context/FamilyContext';
+import { isEventFutureOrActive } from '../../utils/dateUtils';
 import { sanitizeGoogleCalendarId } from '../../utils/googleCalendarService';
+import {
+  exceptionBlocksCar,
+  filterMeaningfulOverrides,
+  hasSeriesException,
+  hasSingleException,
+  normalizeActivityOverrides,
+  overrideDescription,
+  resolveActivityOverrides,
+  resolveCarMode,
+} from '../../utils/carOverrideUtils';
 
 interface CalendarSettingsModalProps {
   calendar: GoogleCalendarItem;
@@ -61,12 +72,8 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
   const members = propMembers || contextMembers;
   const vehicles = propVehicles || contextVehicles;
 
-  // Existing per-calendar config or defaults: Only 2 active modes: 'none' or 'all'
   const existingConfig = propConfig || settings.calendarConfigs?.[calendar.id];
-  const initialCarMode: CalendarCarMode =
-    existingConfig?.carMode === 'none' || calendar.carMode === 'none'
-      ? 'none'
-      : 'all';
+  const initialCarMode = resolveCarMode(existingConfig, calendar);
 
   const initialPrivacy: CalendarPrivacyMode =
     existingConfig?.privacyMode ||
@@ -111,48 +118,60 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
         : calendar.enabledForDisplay !== false)
   );
 
-  // Blokk 5: Gjentagende aktiviteter & overstyringer (Eneste unntaksmodul)
-  const [activityOverrides, setActivityOverrides] = useState<Record<string, ActivityOverride>>(
-    existingConfig?.activityOverrides || calendar.activityOverrides || {}
+  const [activityOverrides, setActivityOverrides] = useState<Record<string, ActivityOverride>>(() =>
+    normalizeActivityOverrides(resolveActivityOverrides(existingConfig, calendar), initialCarMode)
   );
   const [newActivityTitle, setNewActivityTitle] = useState('');
 
+  const meaningfulOverrides = useMemo(
+    () => filterMeaningfulOverrides(activityOverrides, carMode),
+    [activityOverrides, carMode]
+  );
+
   const [isSaving, setIsSaving] = useState(false);
 
-  // Finn distinkte aktiviteter oppdaget i kalenderen for denne kalender-IDen
+  useEffect(() => {
+    if (!isOpen) return;
+    const config = propConfig || settings.calendarConfigs?.[calendar.id];
+    const mode = resolveCarMode(config, calendar);
+    setCarMode(mode);
+    setActivityOverrides(
+      normalizeActivityOverrides(resolveActivityOverrides(config, calendar), mode)
+    );
+  }, [isOpen, calendar.id, propConfig, calendar]);
+
+  // Fremtidige (og pågående) aktiviteter i denne kalenderen
   const detectedCalendarActivities = useMemo(() => {
-    const counts: Record<string, number> = {};
+    const groups = new Map<string, { title: string; count: number; eventId?: string }>();
     (calendarEvents || []).forEach((ev) => {
-      if (ev.calendarId === calendar.id || ev.googleCalendarId === calendar.id) {
-        const t = (ev.title || '').trim();
-        if (t && t !== 'Avtale uten tittel') {
-          counts[t] = (counts[t] || 0) + 1;
-        }
-      }
+      if (ev.calendarId !== calendar.id && ev.googleCalendarId !== calendar.id) return;
+      if (!isEventFutureOrActive(ev.startTime, ev.endTime)) return;
+      const title = (ev.title || '').trim();
+      if (!title || title === 'Avtale uten tittel') return;
+      const current = groups.get(title) || { title, count: 0, eventId: ev.googleEventId || ev.id };
+      current.count += 1;
+      groups.set(title, current);
     });
-    return Object.entries(counts)
-      .map(([title, count]) => ({ title, count }))
-      .sort((a, b) => b.count - a.count);
+    return Array.from(groups.values()).sort((a, b) => b.count - a.count);
   }, [calendarEvents, calendar.id]);
 
   if (!isOpen) return null;
 
-  const handleSetOverride = (
-    title: string,
-    blocksCar: boolean,
-    customBufferBefore?: number,
-    customBufferAfter?: number
-  ) => {
+  const handleCarModeChange = (mode: CalendarCarMode) => {
+    setCarMode(mode);
+    setActivityOverrides((prev) => normalizeActivityOverrides(prev, mode));
+  };
+
+  const handleAddException = (title: string, eventId?: string) => {
     const cleanTitle = title.trim();
     if (!cleanTitle) return;
-    const key = cleanTitle.toLowerCase();
+    const key = eventId ? `event:${eventId}` : cleanTitle.toLowerCase();
     setActivityOverrides((prev) => ({
       ...prev,
       [key]: {
         activityTitle: cleanTitle,
-        blocksCar,
-        bufferBeforeMinutes: customBufferBefore,
-        bufferAfterMinutes: customBufferAfter,
+        blocksCar: exceptionBlocksCar(carMode),
+        eventId,
       },
     }));
     setNewActivityTitle('');
@@ -185,7 +204,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
         targetVehicleId,
         enabledForDisplay: isVisible,
         excludedKeywords: [],
-        activityOverrides,
+        activityOverrides: normalizeActivityOverrides(activityOverrides, carMode),
       };
 
       if (onSave) {
@@ -215,7 +234,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
     >
       <div
         id="calendar-settings-modal-dialog"
-        className="bg-white rounded-3xl shadow-2xl max-w-xl w-full border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]"
+        className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Header */}
         <div className="p-5 sm:p-6 border-b border-slate-100 flex items-start justify-between bg-gradient-to-r from-blue-50/70 via-sky-50/40 to-white">
@@ -230,7 +249,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
                 Kalenderinnstillinger
               </h2>
-              <p className="text-xs text-slate-500 truncate max-w-xs sm:max-w-md">
+              <p className="text-xs text-slate-500 truncate max-w-md sm:max-w-xl">
                 {name.trim() || calendar.summary}
               </p>
             </div>
@@ -423,7 +442,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
               </p>
             </div>
 
-            <div className="space-y-2.5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
               {/* Modus 1: Alle hendelser sperrer bil (unntatt spesifiserte gjentakelser) */}
               <label
                 className={`flex items-start gap-3 p-3.5 rounded-2xl border cursor-pointer transition-all ${
@@ -436,7 +455,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                   type="radio"
                   name="carMode"
                   checked={carMode === 'all'}
-                  onChange={() => setCarMode('all')}
+                  onChange={() => handleCarModeChange('all')}
                   className="mt-1 text-blue-600 focus:ring-blue-500"
                 />
                 <div className="flex-1">
@@ -450,7 +469,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                     </span>
                   </div>
                   <span className="text-[11px] text-slate-600 block mt-1">
-                    Alle avtaler i denne kalenderen sperrer automatisk bilen med valgt reisetidsbuffer — <strong>minus</strong> de faste aktivitetene du spesifiserer i modulen for gjentagende aktiviteter under.
+                    Alle avtaler sperrer bilen. Under kan du ta bort bilsperren for en gjentakende aktivitet, eller for én enkelt hendelse.
                   </span>
                 </div>
               </label>
@@ -467,7 +486,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                   type="radio"
                   name="carMode"
                   checked={carMode === 'none'}
-                  onChange={() => setCarMode('none')}
+                  onChange={() => handleCarModeChange('none')}
                   className="mt-1 text-slate-600 focus:ring-slate-500"
                 />
                 <div className="flex-1">
@@ -476,7 +495,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                     <span>Ingen bilsperre</span>
                   </span>
                   <span className="text-[11px] text-slate-500 block mt-1">
-                    Avtaler i denne kalenderen reserverer aldri bil. Vises kun som vanlige kalenderoppføringer for familien.
+                    Ingen avtaler sperrer bilen av seg selv. Under kan du likevel merke én hendelse, eller alle med samme navn, som skal sperre.
                   </span>
                 </div>
               </label>
@@ -484,7 +503,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
           </div>
 
           {/* Section 4: Reisetidsbuffer & Bil (kun hvis bilreservering er aktiv) */}
-          {carMode !== 'none' && (
+          {(carMode !== 'none' || Object.keys(meaningfulOverrides).length > 0) && (
             <div className="pt-4 border-t border-slate-100 space-y-4 bg-blue-50/40 -mx-5 sm:-mx-6 px-5 sm:px-6 py-4 border-b">
               <div className="flex items-center space-x-2">
                 <Clock className="w-4 h-4 text-blue-600" />
@@ -493,7 +512,7 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                 </h4>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
                     Buffer FØR avtalen:
@@ -537,24 +556,24 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                     ))}
                   </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Hvilken bil som reserveres:
-                </label>
-                <select
-                  id="target-vehicle-select"
-                  value={targetVehicleId}
-                  onChange={(e) => setTargetVehicleId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 cursor-pointer"
-                >
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      🚗 {v.name} ({v.model || v.plateNumber || 'Bil'})
-                    </option>
-                  ))}
-                </select>
+                <div className="sm:col-span-2 lg:col-span-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Hvilken bil som reserveres:
+                  </label>
+                  <select
+                    id="target-vehicle-select"
+                    value={targetVehicleId}
+                    onChange={(e) => setTargetVehicleId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 cursor-pointer"
+                  >
+                    {vehicles.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        🚗 {v.name} ({v.model || v.plateNumber || 'Bil'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 p-2.5 rounded-xl bg-blue-100/60 text-blue-900 text-[11px] font-medium">
@@ -575,22 +594,27 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                   <span>Gjentagende aktiviteter & overstyringer:</span>
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Har du faste eller gjentagende aktiviteter i kalenderen? Spesifiser om de skal sperre bilen eller ikke. Disse overstyringene har alltid høyeste prioritet.
+                  {carMode === 'none'
+                    ? 'Legg til det som likevel skal sperre bilen. «Alle med dette navnet» gjelder hver gang aktiviteten står i kalenderen. «Bare denne» gjelder én hendelse.'
+                    : 'Legg til det som ikke skal sperre bilen, selv om resten av kalenderen gjør det. Du kan unnta alle med samme navn, eller bare én hendelse.'}
                 </p>
               </div>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200 shrink-0">
-                {Object.keys(activityOverrides).length} aktive
+                {Object.keys(meaningfulOverrides).length} unntak
               </span>
             </div>
 
-            {/* Liste over eksisterende overstyringer */}
-            {Object.keys(activityOverrides).length > 0 && (
+            {/* Liste over unntak fra standard */}
+            {Object.keys(meaningfulOverrides).length > 0 && (
               <div className="space-y-2">
                 <span className="text-[11px] font-bold text-slate-700 block">
-                  Aktive regeloverstyringer:
+                  {carMode === 'none'
+                    ? 'Aktiviteter som sperrer bilen (unntak):'
+                    : 'Aktiviteter som ikke sperrer bilen (unntak):'}
                 </span>
                 <div className="space-y-2">
-                  {(Object.entries(activityOverrides) as [string, ActivityOverride][]).map(([key, ov]) => (
+                  {(Object.entries(meaningfulOverrides) as [string, ActivityOverride][]).map(
+                    ([key, ov]) => (
                     <div
                       key={key}
                       className="p-3 rounded-2xl border border-slate-200 bg-slate-50/70 flex items-center justify-between gap-3"
@@ -600,25 +624,19 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                           «{ov.activityTitle}»
                         </span>
                         <span className="text-[10px] text-slate-500">
-                          {ov.blocksCar
-                            ? 'Låser alltid bilen (uansett stikkord)'
-                            : 'Låser ALDRI bilen (fratatt bilsperre)'}
+                          {overrideDescription(ov, carMode)}
                         </span>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {/* Toggle knapp for status */}
-                        <button
-                          type="button"
-                          onClick={() => handleSetOverride(ov.activityTitle, !ov.blocksCar)}
-                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                            ov.blocksCar
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-2xs hover:bg-blue-700'
-                              : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                        <span
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
+                            carMode === 'none'
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white text-slate-700 border-slate-300'
                           }`}
-                          title="Klikk for å endre om aktiviteten sperrer bil"
                         >
-                          {ov.blocksCar ? (
+                          {carMode === 'none' ? (
                             <>
                               <Car className="w-3.5 h-3.5" />
                               <span>Sperrer bil</span>
@@ -629,20 +647,20 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                               <span>Sperrer IKKE</span>
                             </>
                           )}
-                        </button>
+                        </span>
 
-                        {/* Slett overstyring */}
                         <button
                           type="button"
                           onClick={() => handleRemoveOverride(key)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                          title="Fjern denne overstyringen"
+                          className="px-2 py-1.5 text-[10px] font-bold text-slate-500 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Fjern unntaket (tilbake til standard)"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          Tilbake til standard
                         </button>
                       </div>
                     </div>
-                  ))}
+                    )
+                  )}
                 </div>
               </div>
             )}
@@ -663,82 +681,120 @@ export const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       if (newActivityTitle.trim()) {
-                        handleSetOverride(newActivityTitle, false);
+                        handleAddException(newActivityTitle);
                       }
                     }
                   }}
-                  placeholder="Navn på gjentagende aktivitet (f.eks. Idda Hockey, Stabsmøte)..."
+                  placeholder={
+                    carMode === 'none'
+                      ? 'Navn på aktivitet som skal sperre bilen…'
+                      : 'Navn på aktivitet som ikke skal sperre bilen…'
+                  }
                   className="flex-1 px-3 py-2 rounded-xl border border-purple-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 text-xs font-semibold bg-white"
                 />
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newActivityTitle.trim()) {
-                        handleSetOverride(newActivityTitle, false);
-                      }
-                    }}
-                    disabled={!newActivityTitle.trim()}
-                    className="px-3 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold transition-all disabled:opacity-40 cursor-pointer flex items-center gap-1 shadow-2xs"
-                    title="Sett at denne aktiviteten ALDRI skal sperre bilen"
-                  >
-                    <XCircle className="w-3.5 h-3.5 text-rose-500" />
-                    <span>Sperrer IKKE bil</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newActivityTitle.trim()) {
-                        handleSetOverride(newActivityTitle, true);
-                      }
-                    }}
-                    disabled={!newActivityTitle.trim()}
-                    className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all disabled:opacity-40 cursor-pointer flex items-center gap-1 shadow-2xs"
-                    title="Sett at denne aktiviteten ALLTID skal sperre bilen"
-                  >
-                    <Car className="w-3.5 h-3.5" />
-                    <span>Sperrer bil</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (newActivityTitle.trim()) {
+                      handleAddException(newActivityTitle);
+                    }
+                  }}
+                  disabled={!newActivityTitle.trim()}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 cursor-pointer flex items-center gap-1 shadow-2xs shrink-0 ${
+                    carMode === 'none'
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-300'
+                  }`}
+                >
+                  {carMode === 'none' ? (
+                    <>
+                      <Car className="w-3.5 h-3.5" />
+                      <span>Sperr alle med navnet</span>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="w-3.5 h-3.5 text-rose-500" />
+                      <span>Ikke sperr noen</span>
+                    </>
+                  )}
+                </button>
               </div>
 
               {/* Oppdagede aktiviteter fra kalenderen (forslag til 1-klikk overstyring) */}
               {detectedCalendarActivities.length > 0 && (
                 <div className="pt-2 border-t border-purple-200/60 space-y-1.5">
                   <span className="text-[10px] font-bold text-purple-900 block">
-                    💡 Aktiviteter funnet i denne kalenderen (klikk for å overstyre):
+                    {carMode === 'none'
+                      ? 'Kun fremtidige aktiviteter vises. Legg til unntak for det som skal sperre.'
+                      : 'Kun fremtidige aktiviteter vises. Alt sperrer som standard — legg til unntak for det som ikke skal sperre.'}
                   </span>
-                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
-                    {detectedCalendarActivities.map(({ title, count }) => {
-                      const isOverridden = Boolean(activityOverrides[title.toLowerCase()]);
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {detectedCalendarActivities.map(({ title, count, eventId }) => {
+                      const seriesKey = title.toLowerCase();
+                      const seriesExcepted = hasSeriesException(activityOverrides, title, carMode);
+                      const singleExcepted =
+                        eventId && hasSingleException(activityOverrides, eventId, carMode);
+                      const followsDefault = !seriesExcepted && !singleExcepted;
                       return (
                         <div
                           key={title}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all ${
-                            isOverridden
-                              ? 'bg-purple-100 text-purple-900 border-purple-300'
-                              : 'bg-white text-slate-800 border-slate-200 hover:border-purple-300'
+                          className={`flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2.5 py-2 rounded-xl text-[11px] font-bold border ${
+                            followsDefault && carMode === 'all'
+                              ? 'bg-blue-50 text-blue-900 border-blue-200'
+                              : seriesExcepted || singleExcepted
+                                ? carMode === 'none'
+                                  ? 'bg-blue-50 text-blue-900 border-blue-200'
+                                  : 'bg-slate-50 text-slate-700 border-slate-300'
+                                : 'bg-white text-slate-800 border-slate-200'
                           }`}
                         >
-                          <span className="truncate max-w-[150px]">{title}</span>
-                          <span className="text-[10px] text-slate-400 font-normal">
-                            ({count}x)
+                          <span className="truncate min-w-0 flex-1 basis-full sm:basis-auto">{title}</span>
+                          <span className="text-[10px] font-normal opacity-70">
+                            {count > 1 ? `${count}×` : '1×'}
                           </span>
-                          {!isOverridden ? (
+                          {followsDefault && (
+                            <span className="text-[10px] font-semibold">
+                              {carMode === 'all' ? 'Sperrer' : 'Sperrer ikke'}
+                            </span>
+                          )}
+                          {count > 1 && (
                             <button
                               type="button"
-                              onClick={() => handleSetOverride(title, false)}
-                              className="text-[10px] text-rose-600 hover:underline font-semibold ml-1 cursor-pointer"
-                              title="Sett at denne aktiviteten IKKE skal reservere bil"
+                              onClick={() => {
+                                if (seriesExcepted) {
+                                  handleRemoveOverride(seriesKey);
+                                  return;
+                                }
+                                handleAddException(title);
+                              }}
+                              className="text-[10px] text-blue-700 hover:underline font-semibold cursor-pointer"
                             >
-                              Sperr ikke bil
+                              {seriesExcepted
+                                ? 'Tilbake til standard'
+                                : carMode === 'none'
+                                  ? 'Sperr alle'
+                                  : 'Ikke sperr noen'}
                             </button>
-                          ) : (
-                            <span className="text-[10px] text-purple-700 font-semibold ml-1">
-                              ✓ Overstyrt
-                            </span>
+                          )}
+                          {count === 1 && eventId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (singleExcepted) {
+                                  handleRemoveOverride(`event:${eventId}`);
+                                  return;
+                                }
+                                handleAddException(title, eventId);
+                              }}
+                              className="text-[10px] text-blue-700 hover:underline font-semibold cursor-pointer"
+                            >
+                              {singleExcepted
+                                ? 'Tilbake til standard'
+                                : carMode === 'none'
+                                  ? 'Sperr denne'
+                                  : 'Ikke sperr denne'}
+                            </button>
                           )}
                         </div>
                       );

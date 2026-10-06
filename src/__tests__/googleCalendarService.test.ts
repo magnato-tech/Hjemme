@@ -26,6 +26,31 @@ describe('googleCalendarService', () => {
     expect(result.shouldCreateCar).toBe(false);
   });
 
+  it('ingen bilsperre kan likevel sperre en gjentakende aktivitet eller én hendelse', () => {
+    const calendarConfig = {
+      calendarId: 'c1',
+      privacyMode: 'full' as const,
+      carMode: 'none' as const,
+      activityOverrides: {
+        hockey: { activityTitle: 'Idda hockey', blocksCar: true },
+        'event:ev-7': { activityTitle: 'Tannlege', blocksCar: true, eventId: 'ev-7' },
+      },
+    };
+
+    expect(
+      evaluateCalendarEventCarReservation({ title: 'Idda hockey', calendarConfig }).shouldCreateCar
+    ).toBe(true);
+    expect(
+      evaluateCalendarEventCarReservation({ title: 'Tannlege', eventId: 'ev-7', calendarConfig }).shouldCreateCar
+    ).toBe(true);
+    expect(
+      evaluateCalendarEventCarReservation({ title: 'Tannlege', eventId: 'ev-8', calendarConfig }).shouldCreateCar
+    ).toBe(false);
+    expect(
+      evaluateCalendarEventCarReservation({ title: 'Fotballtrening', calendarConfig }).shouldCreateCar
+    ).toBe(false);
+  });
+
   it('aktivitetsoverstyring har høyest prioritet', () => {
     const result = evaluateCalendarEventCarReservation({
       title: 'Idda Hockey',

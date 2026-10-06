@@ -10,21 +10,16 @@ export interface CarReservationSpan {
   endTime: string;
 }
 
+/** Stored car reservation used to paint the family car line (manual + calendar-linked). */
+export interface CarReservationIntervalSource {
+  startTime: string;
+  endTime: string;
+  status?: string;
+}
+
 interface TimeInterval {
   start: number;
   end: number;
-}
-
-function isCarModeCalendar(
-  calId: string,
-  cal: GoogleCalendarItem | undefined,
-  settings: FamilySettings
-): boolean {
-  const config = settings.calendarConfigs?.[calId];
-  if (config?.carMode && config.carMode !== 'none') return true;
-  if (cal?.isCarCalendar) return true;
-  if (settings.carCalendarIds?.includes(calId)) return true;
-  return false;
 }
 
 function mergeIntervals(intervals: TimeInterval[]): TimeInterval[] {
@@ -79,8 +74,6 @@ function collectBufferedIntervals(
     if (!calId || !isCalendarActiveForCar(calId, calendarsById.get(calId))) continue;
 
     const cal = calendarsById.get(calId);
-    if (!isCarModeCalendar(calId, cal, settings)) continue;
-
     const calendarConfig = settings.calendarConfigs?.[calId];
     const isCarCalendarFallback =
       Boolean(cal?.isCarCalendar) || Boolean(settings.carCalendarIds?.includes(calId));
@@ -88,6 +81,7 @@ function collectBufferedIntervals(
     const evaluation = evaluateCalendarEventCarReservation({
       title: event.title,
       location: event.location,
+      eventId: event.googleEventId || event.id,
       calendarConfig,
       defaultCarMode: calendarConfig?.carMode === 'all' ? 'all' : 'work_only',
       defaultVehicleId: calendarConfig?.targetVehicleId || cal?.targetVehicleId,
@@ -115,21 +109,38 @@ function collectBufferedIntervals(
   return intervals;
 }
 
+function collectReservationIntervals(
+  reservations: CarReservationIntervalSource[]
+): TimeInterval[] {
+  const intervals: TimeInterval[] = [];
+
+  for (const reservation of reservations) {
+    if (reservation.status === 'cancelled') continue;
+
+    const start = new Date(reservation.startTime).getTime();
+    const end = new Date(reservation.endTime).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) continue;
+
+    intervals.push({ start, end });
+  }
+
+  return intervals;
+}
+
 /** Sammenslåtte bilreservasjonsintervaller per dag (én liste per dag i weekDates). */
 export function buildCarReservationSpansByDay(
   events: CalendarEvent[],
   settings: FamilySettings,
   calendars: GoogleCalendarItem[],
   weekDates: Date[],
-  isCalendarActiveForCar: (calId: string, calItem?: GoogleCalendarItem) => boolean
+  isCalendarActiveForCar: (calId: string, calItem?: GoogleCalendarItem) => boolean,
+  reservations: CarReservationIntervalSource[] = []
 ): CarReservationSpan[][] {
   const calendarsById = new Map(calendars.map((cal) => [cal.id, cal]));
-  const bufferedIntervals = collectBufferedIntervals(
-    events,
-    settings,
-    calendarsById,
-    isCalendarActiveForCar
-  );
+  const bufferedIntervals = [
+    ...collectBufferedIntervals(events, settings, calendarsById, isCalendarActiveForCar),
+    ...collectReservationIntervals(reservations),
+  ];
 
   return weekDates.map((day) => {
     const dayIntervals = bufferedIntervals
@@ -149,14 +160,16 @@ export function getFamilyCarOccupiedDateKeys(
   settings: FamilySettings,
   calendars: GoogleCalendarItem[],
   dates: Date[],
-  isCalendarActiveForCar: (calId: string, calItem?: GoogleCalendarItem) => boolean
+  isCalendarActiveForCar: (calId: string, calItem?: GoogleCalendarItem) => boolean,
+  reservations: CarReservationIntervalSource[] = []
 ): Set<string> {
   const spansByDay = buildCarReservationSpansByDay(
     events,
     settings,
     calendars,
     dates,
-    isCalendarActiveForCar
+    isCalendarActiveForCar,
+    reservations
   );
 
   const keys = new Set<string>();
@@ -174,13 +187,15 @@ export function buildCarReservationSpansForDay(
   settings: FamilySettings,
   calendars: GoogleCalendarItem[],
   day: Date,
-  isCalendarActiveForCar: (calId: string, calItem?: GoogleCalendarItem) => boolean
+  isCalendarActiveForCar: (calId: string, calItem?: GoogleCalendarItem) => boolean,
+  reservations: CarReservationIntervalSource[] = []
 ): CarReservationSpan[] {
   return buildCarReservationSpansByDay(
     events,
     settings,
     calendars,
     [day],
-    isCalendarActiveForCar
+    isCalendarActiveForCar,
+    reservations
   )[0];
 }
