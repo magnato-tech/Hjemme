@@ -230,7 +230,7 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     });
 
     // 3. Fallback to sample calendars if empty and mock data is not disabled
-    if (map.size === 0 && !settings.disableMockData) {
+    if (map.size === 0 && settings.disableMockData === false) {
       SAMPLE_GOOGLE_CALENDARS.forEach((c) => {
         if (!deletedCalIds.has(c.id)) {
           map.set(c.id, { ...c });

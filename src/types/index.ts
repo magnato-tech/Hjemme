@@ -248,6 +248,8 @@ export interface FamilySettings {
   calendarPrivacyModes?: Record<string, 'full' | 'busy_only'>; // calendarId -> 'full' | 'busy_only'
   calendarConfigs?: Record<string, PerCalendarConfig>; // calendarId -> detailed settings
   disableMockData?: boolean;
+  /** Medlems-id-er som er slettet og ikke skal hentes inn igjen fra demodata eller skyen. */
+  deletedMemberIds?: string[];
   savedCalendars?: GoogleCalendarItem[];
   disabledCalendarIds?: string[];
   /** Skjult kun i kalendervisning; teller fortsatt for Familiebilen */

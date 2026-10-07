@@ -219,6 +219,156 @@ const FamilyContext = createContext<FamilyContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'familiekoordinator_state_v1';
 
+const DEMO_MEMBER_IDS = ['member_synelle', 'member_marcus'];
+const FAKE_SAMPLE_CALENDAR_IDS = new Set([
+  'c_jobb_totland@group.calendar.google.com',
+  'c_bil_familie@group.calendar.google.com',
+  'c_familie_felles@group.calendar.google.com',
+]);
+
+function isDemoCalendarEvent(event: { id: string; isMock?: boolean }) {
+  return (
+    event.id === 'cal_ev_1' ||
+    event.id === 'cal_ev_2' ||
+    event.id.startsWith('mock_') ||
+    event.id.startsWith('sample_') ||
+    Boolean(event.isMock)
+  );
+}
+
+function isDemoReservation(reservation: { id: string; isMock?: boolean }) {
+  return (
+    reservation.id === 'res_auto_1' ||
+    reservation.id.startsWith('mock_') ||
+    reservation.id.startsWith('sample_') ||
+    Boolean(reservation.isMock)
+  );
+}
+
+type BootState = {
+  activeMemberId: string;
+  members: FamilyMember[];
+  vehicles: Vehicle[];
+  reservations: CarReservation[];
+  calendarConnections: CalendarConnection[];
+  calendarEvents: CalendarEvent[];
+  taskTemplates: TaskTemplate[];
+  taskInstances: TaskInstance[];
+  settings: FamilySettings;
+  weeklyPointsRecords: MemberWeeklyPointsRecord[];
+};
+
+function readStoredFamilyBlob(): Record<string, any> | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    return JSON.parse(saved);
+  } catch {
+    return null;
+  }
+}
+
+function productionMemberFallback(): FamilyMember[] {
+  return initialFamilyMembers.filter((member) => member.id === 'member_magnar');
+}
+
+function computeBootState(): BootState {
+  const parsed = readStoredFamilyBlob();
+  const storedSettings = parsed?.settings || {};
+  const hasStoredData = Boolean(parsed);
+  const settings = migrateCalendarSettings({
+    ...initialSettings,
+    ...storedSettings,
+    disableMockData: true,
+    deletedMemberIds: Array.from(new Set([...(storedSettings.deletedMemberIds || []), ...DEMO_MEMBER_IDS])),
+    googleCalendarConfig: storedSettings.googleCalendarConfig,
+  });
+
+  settings.savedCalendars = (settings.savedCalendars || []).filter(
+    (cal) => !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)
+  );
+  settings.carCalendarIds = (settings.carCalendarIds || []).filter(
+    (id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id)
+  );
+
+  const deletedMembers = new Set(settings.deletedMemberIds || []);
+  const sourceMembers: FamilyMember[] = parsed?.members || (hasStoredData ? [] : productionMemberFallback());
+  const members = sourceMembers.filter(
+    (member) => !deletedMembers.has(member.id) && !DEMO_MEMBER_IDS.includes(member.id)
+  );
+  const safeMembers = members.length > 0 ? members : productionMemberFallback();
+
+  const hasGoogleToken = Boolean(localStorage.getItem('gcal_access_token'));
+  const calendarConnections = ((parsed?.calendarConnections || []) as CalendarConnection[]).filter(
+    (connection) => hasGoogleToken || connection.id !== 'cal_conn_1'
+  );
+
+  const calendarEvents: CalendarEvent[] = ((parsed?.calendarEvents || []) as CalendarEvent[]).filter(
+    (event) => !isDemoCalendarEvent(event)
+  );
+  const reservations: CarReservation[] = ((parsed?.reservations || []) as CarReservation[]).filter(
+    (reservation) => !isDemoReservation(reservation)
+  );
+
+  let activeMemberId = parsed?.activeMemberId || safeMembers[0]?.id || 'member_magnar';
+  if (!safeMembers.some((member) => member.id === activeMemberId)) {
+    activeMemberId = safeMembers[0]?.id || 'member_magnar';
+  }
+
+  return {
+    activeMemberId,
+    members: safeMembers,
+    vehicles: parsed?.vehicles || initialVehicles,
+    reservations,
+    calendarConnections,
+    calendarEvents,
+    taskTemplates: migrateTaskTemplates(parsed?.taskTemplates || initialTaskTemplates),
+    taskInstances: parsed?.taskInstances || initialTaskInstances,
+    settings,
+    weeklyPointsRecords: parsed?.weeklyPointsRecords || [],
+  };
+}
+
+function mergeCloudSettings(
+  prev: FamilySettings,
+  cloud: FamilySettings,
+  allowDemo: boolean
+): { next: FamilySettings; persist: boolean } {
+  const migrated = migrateCalendarSettings(cloud);
+  if (allowDemo) return { next: migrated, persist: false };
+
+  const deletedMemberIds = Array.from(
+    new Set([...(prev.deletedMemberIds || []), ...(migrated.deletedMemberIds || []), ...DEMO_MEMBER_IDS])
+  );
+  const deletedCal = new Set([...(prev.deletedCalendarIds || []), ...(migrated.deletedCalendarIds || [])]);
+  const savedMap = new Map<string, GoogleCalendarItem>();
+  [...(migrated.savedCalendars || []), ...(prev.savedCalendars || [])].forEach((cal) => {
+    if (FAKE_SAMPLE_CALENDAR_IDS.has(cal.id) || deletedCal.has(cal.id)) return;
+    const existing = savedMap.get(cal.id);
+    savedMap.set(cal.id, { ...existing, ...cal });
+  });
+  const carCalendarIds = Array.from(
+    new Set([...(migrated.carCalendarIds || []), ...(prev.carCalendarIds || [])])
+  ).filter((id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id) && !deletedCal.has(id));
+
+  const next: FamilySettings = {
+    ...prev,
+    ...migrated,
+    disableMockData: true,
+    deletedMemberIds,
+    deletedCalendarIds: Array.from(deletedCal),
+    savedCalendars: Array.from(savedMap.values()),
+    carCalendarIds,
+  };
+
+  const persist =
+    migrated.disableMockData !== true ||
+    JSON.stringify(migrated.savedCalendars || []) !== JSON.stringify(next.savedCalendars || []) ||
+    JSON.stringify([...(migrated.deletedMemberIds || [])].sort()) !== JSON.stringify([...deletedMemberIds].sort());
+
+  return { next, persist };
+}
+
 export const mergeCalendarsList = (
   currentList: GoogleCalendarItem[] = [],
   savedList?: GoogleCalendarItem[],
@@ -232,8 +382,8 @@ export const mergeCalendarsList = (
   const map = new Map<string, GoogleCalendarItem>();
   const deletedSet = new Set(deletedIds || []);
 
-  // 1. If mock data is not disabled, seed with SAMPLE_GOOGLE_CALENDARS (unless deleted)
-  if (!disableMockData) {
+  // 1. Sample calendars only when the user has explicitly turned demo mode on
+  if (disableMockData === false) {
     SAMPLE_GOOGLE_CALENDARS.forEach((c) => {
       if (!deletedSet.has(c.id)) {
         map.set(c.id, { ...c, enabledForDisplay: true });
@@ -244,7 +394,7 @@ export const mergeCalendarsList = (
   // 2. Add current list (unless deleted)
   currentList.forEach((c) => {
     if (deletedSet.has(c.id)) return;
-    if (disableMockData && SAMPLE_GOOGLE_CALENDARS.some((s) => s.id === c.id)) return;
+    if (disableMockData !== false && FAKE_SAMPLE_CALENDAR_IDS.has(c.id)) return;
     map.set(c.id, { ...c });
   });
 
@@ -252,7 +402,7 @@ export const mergeCalendarsList = (
   if (savedList && savedList.length > 0) {
     savedList.forEach((c) => {
       if (deletedSet.has(c.id)) return;
-      if (disableMockData && SAMPLE_GOOGLE_CALENDARS.some((s) => s.id === c.id)) return;
+      if (disableMockData !== false && FAKE_SAMPLE_CALENDAR_IDS.has(c.id)) return;
       const existing = map.get(c.id);
       map.set(c.id, {
         ...existing,
@@ -315,21 +465,31 @@ export const mergeCalendarsList = (
 };
 
 export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const bootRef = useRef<BootState | null>(null);
+  if (!bootRef.current) bootRef.current = computeBootState();
+  const boot = bootRef.current;
+  const allowDemoRef = useRef(false);
+  const settingsRef = useRef(boot.settings);
+  const membersRef = useRef(boot.members);
+  const lastPushedSettingsRef = useRef('');
+
   const currentWeek = getWeekNumber(getPointsWeekStart());
   const currentYear = new Date().getFullYear();
 
-  // Load from localStorage or defaults
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [activeMemberId, setActiveMemberId] = useState<string>('member_marcus');
-  const [members, setMembers] = useState<FamilyMember[]>(initialFamilyMembers);
-  const [vehicles, setVehicles] = useState<Vehicle[]>(initialVehicles);
-  const [reservations, setReservations] = useState<CarReservation[]>(initialReservations);
-  const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>(initialCalendarConnections);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(initialCalendarEvents);
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>(initialTaskTemplates);
-  const [taskInstances, setTaskInstances] = useState<TaskInstance[]>(initialTaskInstances);
-  const [settings, setSettings] = useState<FamilySettings>(initialSettings);
-  const [weeklyPointsRecords, setWeeklyPointsRecords] = useState<MemberWeeklyPointsRecord[]>([]);
+  // Saved data is read before the first paint so demo data cannot be written back over it.
+  const [isLoaded] = useState(true);
+  const [activeMemberId, setActiveMemberId] = useState<string>(boot.activeMemberId);
+  const [members, setMembers] = useState<FamilyMember[]>(boot.members);
+  const [vehicles, setVehicles] = useState<Vehicle[]>(boot.vehicles);
+  const [reservations, setReservations] = useState<CarReservation[]>(boot.reservations);
+  const [calendarConnections, setCalendarConnections] = useState<CalendarConnection[]>(boot.calendarConnections);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(boot.calendarEvents);
+  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>(boot.taskTemplates);
+  const [taskInstances, setTaskInstances] = useState<TaskInstance[]>(boot.taskInstances);
+  const [settings, setSettings] = useState<FamilySettings>(boot.settings);
+  const [weeklyPointsRecords, setWeeklyPointsRecords] = useState<MemberWeeklyPointsRecord[]>(boot.weeklyPointsRecords);
+  settingsRef.current = settings;
+  membersRef.current = members;
 
   // Firebase Auth & Firestore state
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
@@ -346,77 +506,21 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return localStorage.getItem('gcal_last_synced') || null;
   });
   const [googleSyncStatusMessage, setGoogleSyncStatusMessage] = useState<string | null>(null);
-  const [availableGoogleCalendars, setAvailableGoogleCalendars] = useState<GoogleCalendarItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return mergeCalendarsList(
-          [],
-          parsed.settings?.savedCalendars,
-          parsed.settings?.googleCalendarConfig,
-          parsed.settings?.disableMockData,
-          parsed.settings?.disabledCalendarIds,
-          parsed.settings?.deletedCalendarIds,
-          parsed.settings?.carCalendarIds,
-          parsed.settings?.calendarPrivacyModes
-        );
-      }
-    } catch {
-      // ignore
-    }
-    return SAMPLE_GOOGLE_CALENDARS;
-  });
+  const [availableGoogleCalendars, setAvailableGoogleCalendars] = useState<GoogleCalendarItem[]>(() =>
+    mergeCalendarsList(
+      [],
+      boot.settings.savedCalendars,
+      boot.settings.googleCalendarConfig,
+      boot.settings.disableMockData,
+      boot.settings.disabledCalendarIds,
+      boot.settings.deletedCalendarIds,
+      boot.settings.carCalendarIds,
+      boot.settings.calendarPrivacyModes
+    )
+  );
   const [isLoadingCalendars, setIsLoadingCalendars] = useState(false);
 
-  const isGoogleConnected = Boolean(googleAccessToken) || calendarConnections.some((c) => c.isConnected);
-
-  // Initialize from localStorage
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const isMockEv = (e: CalendarEvent) => e.id === 'cal_ev_1' || e.id === 'cal_ev_2' || e.id.startsWith('mock_') || (e as any).isMock;
-        const isMockRes = (r: CarReservation) => r.id === 'res_auto_1' || r.id.startsWith('mock_') || (r as any).isMock;
-
-        if (parsed.members) setMembers(parsed.members);
-        if (parsed.vehicles) setVehicles(parsed.vehicles);
-        if (parsed.reservations) {
-          setReservations(parsed.settings?.disableMockData ? parsed.reservations.filter((r: CarReservation) => !isMockRes(r)) : parsed.reservations);
-        }
-        if (parsed.calendarConnections) setCalendarConnections(parsed.calendarConnections);
-        if (parsed.calendarEvents) {
-          setCalendarEvents(parsed.settings?.disableMockData ? parsed.calendarEvents.filter((e: CalendarEvent) => !isMockEv(e)) : parsed.calendarEvents);
-        }
-        if (parsed.taskTemplates) setTaskTemplates(migrateTaskTemplates(parsed.taskTemplates));
-        if (parsed.taskInstances) setTaskInstances(parsed.taskInstances);
-        if (parsed.settings) {
-          const migratedSettings = migrateCalendarSettings(parsed.settings);
-          setSettings(migratedSettings);
-          if (migratedSettings.savedCalendars?.length) {
-            setAvailableGoogleCalendars((prev) =>
-              mergeCalendarsList(
-                prev,
-                migratedSettings.savedCalendars,
-                migratedSettings.googleCalendarConfig,
-                migratedSettings.disableMockData,
-                migratedSettings.disabledCalendarIds,
-                migratedSettings.deletedCalendarIds,
-                migratedSettings.carCalendarIds,
-                migratedSettings.calendarPrivacyModes
-              )
-            );
-          }
-        }
-        if (parsed.weeklyPointsRecords) setWeeklyPointsRecords(parsed.weeklyPointsRecords);
-        if (parsed.activeMemberId) setActiveMemberId(parsed.activeMemberId);
-      }
-    } catch (e) {
-      console.error('Failed to load local storage state', e);
-    }
-    setIsLoaded(true);
-  }, []);
+  const isGoogleConnected = Boolean(googleAccessToken);
 
   const feedsImported = useRef(false);
   useEffect(() => {
@@ -542,23 +646,45 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         console.log('Firebase Auth user active:', user.email);
 
         try {
-          // Attempt seeding initial family dataset if collections in Firestore are empty
+          // Seed only the already-cleaned local dataset. Never push the built-in demo family
+          // into an empty cloud just because the app was opened.
+          const seedFrom = computeBootState();
           await seedInitialDataIfEmpty({
-            members,
-            vehicles,
-            reservations,
-            calendarEvents,
-            taskTemplates,
-            taskInstances,
-            settings,
+            members: seedFrom.members,
+            vehicles: seedFrom.vehicles,
+            reservations: seedFrom.reservations,
+            calendarEvents: seedFrom.calendarEvents,
+            taskTemplates: seedFrom.taskTemplates,
+            taskInstances: seedFrom.taskInstances,
+            settings: seedFrom.settings,
           });
 
           // Subscribe to live Firestore changes across all clients
           const uMembers = subscribeMembers((cloudMembers) => {
-            if (cloudMembers && cloudMembers.length > 0) {
-              setMembers(cloudMembers);
-              setIsFirestoreConnected(true);
-            }
+            if (!cloudMembers) return;
+            const deleted = new Set(settingsRef.current.deletedMemberIds || []);
+            if (!allowDemoRef.current) DEMO_MEMBER_IDS.forEach((id) => deleted.add(id));
+            cloudMembers
+              .filter((member) => deleted.has(member.id))
+              .forEach((member) => {
+                deleteMemberFromFirestore(member.id).catch(() => {});
+              });
+            const byId = new Map<string, FamilyMember>();
+            membersRef.current.forEach((member) => {
+              if (!deleted.has(member.id)) byId.set(member.id, member);
+            });
+            cloudMembers.forEach((member) => {
+              if (!deleted.has(member.id)) byId.set(member.id, member);
+            });
+            const merged = Array.from(byId.values());
+            const next = merged.length > 0 ? merged : productionMemberFallback();
+            setMembers(next);
+            setIsFirestoreConnected(true);
+            next.forEach((member) => {
+              if (!cloudMembers.some((cloudMember) => cloudMember.id === member.id)) {
+                saveMemberToFirestore(member).catch(() => {});
+              }
+            });
           });
           unsubs.push(uMembers);
 
@@ -570,16 +696,37 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           unsubs.push(uVehicles);
 
           const uReservations = subscribeReservations((cloudRes) => {
-            if (cloudRes) {
-              setReservations(cloudRes);
+            if (!cloudRes) return;
+            if (!allowDemoRef.current) {
+              cloudRes.filter(isDemoReservation).forEach((reservation) => {
+                deleteReservationFromFirestore(reservation.id).catch(() => {});
+              });
             }
+            setReservations((local) => {
+              const keep = (reservation: CarReservation) =>
+                allowDemoRef.current || !isDemoReservation(reservation);
+              const byId = new Map<string, CarReservation>();
+              local.filter(keep).forEach((reservation) => byId.set(reservation.id, reservation));
+              cloudRes.filter(keep).forEach((reservation) => byId.set(reservation.id, reservation));
+              return Array.from(byId.values());
+            });
           });
           unsubs.push(uReservations);
 
           const uCalendar = subscribeCalendarEvents((cloudCal) => {
-            if (cloudCal) {
-              setCalendarEvents(cloudCal);
+            if (!cloudCal) return;
+            if (!allowDemoRef.current) {
+              cloudCal.filter(isDemoCalendarEvent).forEach((event) => {
+                deleteCalendarEventFromFirestore(event.id).catch(() => {});
+              });
             }
+            setCalendarEvents((local) => {
+              const keep = (event: CalendarEvent) => allowDemoRef.current || !isDemoCalendarEvent(event);
+              const byId = new Map<string, CalendarEvent>();
+              local.filter(keep).forEach((event) => byId.set(event.id, event));
+              cloudCal.filter(keep).forEach((event) => byId.set(event.id, event));
+              return Array.from(byId.values());
+            });
           });
           unsubs.push(uCalendar);
 
@@ -598,9 +745,27 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           unsubs.push(uTaskInstances);
 
           const uSettings = subscribeSettings((cloudSettings) => {
-            if (cloudSettings) {
-              setSettings(cloudSettings);
-            }
+            if (!cloudSettings) return;
+            const { next, persist } = mergeCloudSettings(settingsRef.current, cloudSettings, allowDemoRef.current);
+            settingsRef.current = next;
+            setSettings(next);
+            setAvailableGoogleCalendars((calendars) =>
+              mergeCalendarsList(
+                calendars,
+                next.savedCalendars,
+                next.googleCalendarConfig,
+                next.disableMockData,
+                next.disabledCalendarIds,
+                next.deletedCalendarIds,
+                next.carCalendarIds,
+                next.calendarPrivacyModes
+              )
+            );
+            if (!persist) return;
+            const serialized = JSON.stringify(next);
+            if (lastPushedSettingsRef.current === serialized) return;
+            lastPushedSettingsRef.current = serialized;
+            saveSettingsToFirestore(next).catch(console.error);
           });
           unsubs.push(uSettings);
 
@@ -931,7 +1096,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsLoadingCalendars(true);
     try {
       const token = googleAccessToken || localStorage.getItem('gcal_access_token') || undefined;
-      const calendars = await fetchUserGoogleCalendars(token, !settings.disableMockData);
+      const calendars = await fetchUserGoogleCalendars(token, settings.disableMockData === false);
       const merged = mergeCalendarsList(
         calendars,
         settings.savedCalendars,
@@ -952,25 +1117,9 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  const isMockEvent = (e: CalendarEvent) => {
-    return (
-      e.id === 'cal_ev_1' ||
-      e.id === 'cal_ev_2' ||
-      e.id.startsWith('mock_') ||
-      e.id.startsWith('sample_') ||
-      (e as any).isMock ||
-      SAMPLE_GOOGLE_CALENDARS.some((s) => s.id === e.calendarId || s.id === e.googleCalendarId)
-    );
-  };
+  const isMockEvent = (e: CalendarEvent) => isDemoCalendarEvent(e as CalendarEvent & { isMock?: boolean });
 
-  const isMockReservation = (r: CarReservation) => {
-    return (
-      r.id === 'res_auto_1' ||
-      r.id.startsWith('mock_') ||
-      r.id.startsWith('sample_') ||
-      (r as any).isMock
-    );
-  };
+  const isMockReservation = (r: CarReservation) => isDemoReservation(r as CarReservation & { isMock?: boolean });
 
   const addCustomGoogleCalendar = async (
     id: string,
@@ -1605,18 +1754,32 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const removeTestMembers = () => {
+    allowDemoRef.current = false;
+    const removed = members.filter((m) => m.isTestPerson || DEMO_MEMBER_IDS.includes(m.id));
+    removed.forEach((m) => {
+      deleteMemberFromFirestore(m.id).catch(() => {});
+    });
     setMembers((prev) => {
-      const remaining = prev.filter(
-        (m) => !m.isTestPerson && m.id !== 'member_marcus' && m.id !== 'member_synelle'
-      );
-      if (remaining.length === 0) {
-        return initialFamilyMembers.filter((m) => m.role === 'admin');
-      }
-      return remaining;
+      const remaining = prev.filter((m) => !m.isTestPerson && !DEMO_MEMBER_IDS.includes(m.id));
+      return remaining.length > 0 ? remaining : productionMemberFallback();
+    });
+    setActiveMemberId((current) => (removed.some((m) => m.id === current) ? 'member_magnar' : current));
+    setSettings((prev) => {
+      const next: FamilySettings = {
+        ...prev,
+        disableMockData: true,
+        deletedMemberIds: Array.from(
+          new Set([...(prev.deletedMemberIds || []), ...removed.map((m) => m.id), ...DEMO_MEMBER_IDS])
+        ),
+      };
+      settingsRef.current = next;
+      if (firebaseUser) saveSettingsToFirestore(next).catch(console.error);
+      return next;
     });
   };
 
   const loadAllTestData = async (): Promise<void> => {
+    allowDemoRef.current = true;
     setMembers(initialFamilyMembers);
     setVehicles(initialVehicles);
     setReservations(initialReservations);
@@ -1632,51 +1795,72 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ...initialSettings,
       disableMockData: false,
       disabledCalendarIds: [],
+      deletedMemberIds: (settings.deletedMemberIds || []).filter((id) => !DEMO_MEMBER_IDS.includes(id)),
     };
+    settingsRef.current = newSettings;
     setSettings(newSettings);
     setActiveMemberId('member_marcus');
 
     if (firebaseUser) {
       await saveSettingsToFirestore(newSettings).catch(console.error);
+      for (const member of initialFamilyMembers) {
+        await saveMemberToFirestore(member).catch(console.error);
+      }
     }
   };
 
   const removeAllTestData = async (keepAdminOnly: boolean = false): Promise<void> => {
-    // 1. Remove mock calendar events & reservations
+    allowDemoRef.current = false;
     const cleanedEvents = calendarEvents.filter((e) => !isMockEvent(e));
     const cleanedReservations = reservations.filter((r) => !isMockReservation(r));
     setCalendarEvents(cleanedEvents);
     setReservations(cleanedReservations);
 
-    // 2. Remove mock / sample calendars so only real user calendar remains
     const cleanedCalendars = availableGoogleCalendars
-      .filter((c) => !SAMPLE_GOOGLE_CALENDARS.some((s) => s.id === c.id && s.id !== 'primary'))
+      .filter((c) => !FAKE_SAMPLE_CALENDAR_IDS.has(c.id))
       .map((c) => ({ ...c, enabledForDisplay: true }));
     setAvailableGoogleCalendars(cleanedCalendars);
 
-    // 3. Clean test members if requested
+    const removedMembers = members.filter(
+      (m) => m.isTestPerson || DEMO_MEMBER_IDS.includes(m.id) || (keepAdminOnly && m.role !== 'admin')
+    );
     if (keepAdminOnly) {
-      const adminMember = members.find((m) => m.role === 'admin') || initialFamilyMembers[0];
+      const adminMember = members.find((m) => m.role === 'admin') || productionMemberFallback()[0];
       setMembers([adminMember]);
       setActiveMemberId(adminMember.id);
     } else {
       setMembers((prev) => {
-        const withoutTest = prev.filter((m) => !m.isTestPerson);
-        return withoutTest.length > 0 ? withoutTest : prev;
+        const remaining = prev.filter((m) => !m.isTestPerson && !DEMO_MEMBER_IDS.includes(m.id));
+        return remaining.length > 0 ? remaining : productionMemberFallback();
       });
+      if (removedMembers.some((m) => m.id === activeMemberId)) {
+        setActiveMemberId('member_magnar');
+      }
     }
 
-    // 4. Update settings
     const newSettings: FamilySettings = {
       ...settings,
       disableMockData: true,
       disabledCalendarIds: [],
+      deletedMemberIds: Array.from(
+        new Set([...(settings.deletedMemberIds || []), ...removedMembers.map((m) => m.id), ...DEMO_MEMBER_IDS])
+      ),
+      savedCalendars: (settings.savedCalendars || []).filter((cal) => !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)),
+      carCalendarIds: (settings.carCalendarIds || []).filter((id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id)),
     };
+    settingsRef.current = newSettings;
     setSettings(newSettings);
 
+    calendarEvents.filter(isMockEvent).forEach((event) => {
+      deleteCalendarEventFromFirestore(event.id).catch(() => {});
+    });
+    reservations.filter(isMockReservation).forEach((reservation) => {
+      deleteReservationFromFirestore(reservation.id).catch(() => {});
+    });
+    removedMembers.forEach((member) => {
+      deleteMemberFromFirestore(member.id).catch(() => {});
+    });
     if (firebaseUser) {
-      deleteCalendarEventFromFirestore('cal_ev_1').catch(() => {});
-      deleteCalendarEventFromFirestore('cal_ev_2').catch(() => {});
       await saveSettingsToFirestore(newSettings).catch(console.error);
     }
   };
@@ -2122,6 +2306,15 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const deleteMember = (id: string) => {
     setMembers((prev) => prev.filter((m) => m.id !== id));
+    setSettings((prev) => {
+      const next: FamilySettings = {
+        ...prev,
+        deletedMemberIds: Array.from(new Set([...(prev.deletedMemberIds || []), id])),
+      };
+      settingsRef.current = next;
+      if (firebaseUser) saveSettingsToFirestore(next).catch(console.error);
+      return next;
+    });
     if (firebaseUser) {
       deleteMemberFromFirestore(id).catch(console.error);
     }
@@ -2173,7 +2366,14 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     getMemberClaimedPointsUtil(taskInstances, memberId);
 
   const resetAllData = () => {
+    allowDemoRef.current = true;
     localStorage.removeItem(STORAGE_KEY);
+    const demoSettings: FamilySettings = {
+      ...initialSettings,
+      disableMockData: false,
+      deletedMemberIds: [],
+    };
+    settingsRef.current = demoSettings;
     setMembers(initialFamilyMembers);
     setVehicles(initialVehicles);
     setReservations(initialReservations);
@@ -2181,9 +2381,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCalendarEvents(initialCalendarEvents);
     setTaskTemplates(initialTaskTemplates);
     setTaskInstances(initialTaskInstances);
-    setSettings(initialSettings);
+    setSettings(demoSettings);
     setWeeklyPointsRecords([]);
     setActiveMemberId('member_marcus');
+    setAvailableGoogleCalendars(SAMPLE_GOOGLE_CALENDARS.map((c) => ({ ...c, enabledForDisplay: true })));
   };
 
   return (
