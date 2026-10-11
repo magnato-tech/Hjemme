@@ -285,12 +285,36 @@ function computeBootState(): BootState {
     googleCalendarConfig: storedSettings.googleCalendarConfig,
   });
 
-  settings.savedCalendars = (settings.savedCalendars || []).filter(
-    (cal) => cal.isCustom || !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)
+  const deletedCal = new Set(settings.deletedCalendarIds || []);
+  const bootSavedMap = new Map<string, GoogleCalendarItem>();
+  (settings.savedCalendars || []).forEach((cal) => {
+    if ((cal.isCustom || !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)) && !deletedCal.has(cal.id)) {
+      bootSavedMap.set(cal.id, cal);
+    }
+  });
+  // Sørg for at standardkalenderne fra initialSettings alltid er med hvis ikke eksplisitt slettet
+  (initialSettings.savedCalendars || []).forEach((cal) => {
+    if (!deletedCal.has(cal.id) && !bootSavedMap.has(cal.id)) {
+      bootSavedMap.set(cal.id, cal);
+    }
+  });
+  settings.savedCalendars = Array.from(bootSavedMap.values());
+
+  const bootCarCalSet = new Set(
+    (settings.carCalendarIds || []).filter((id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id) && !deletedCal.has(id))
   );
-  settings.carCalendarIds = (settings.carCalendarIds || []).filter(
-    (id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id)
-  );
+  settings.savedCalendars.forEach((c) => {
+    if (c.isCarCalendar && !deletedCal.has(c.id)) {
+      bootCarCalSet.add(c.id);
+    }
+  });
+  settings.carCalendarIds = Array.from(bootCarCalSet);
+
+  settings.calendarConfigs = {
+    ...(initialSettings.calendarConfigs || {}),
+    ...(settings.calendarConfigs || {}),
+  };
+
   if (settings.googleCalendarConfig && FAKE_SAMPLE_CALENDAR_IDS.has(settings.googleCalendarConfig.calendarId)) {
     settings.googleCalendarConfig = undefined;
   }
@@ -351,8 +375,20 @@ function mergeCloudSettings(
     const existing = savedMap.get(cal.id);
     savedMap.set(cal.id, { ...existing, ...cal });
   });
+
+  // Sørg for at standardkalendrene alltid er med hvis de ikke eksplisitt er slettet av brukeren
+  (initialSettings.savedCalendars || []).forEach((cal) => {
+    if (!deletedCal.has(cal.id) && !savedMap.has(cal.id)) {
+      savedMap.set(cal.id, cal);
+    }
+  });
+
   const carCalendarIds = Array.from(
-    new Set([...(migrated.carCalendarIds || []), ...(prev.carCalendarIds || [])])
+    new Set([
+      ...(migrated.carCalendarIds || []),
+      ...(prev.carCalendarIds || []),
+      ...Array.from(savedMap.values()).filter((c) => c.isCarCalendar).map((c) => c.id),
+    ])
   ).filter((id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id) && !deletedCal.has(id));
 
   const resolvedConfig =
@@ -362,6 +398,12 @@ function mergeCloudSettings(
       ? prev.googleCalendarConfig
       : undefined;
 
+  const mergedConfigs = {
+    ...(initialSettings.calendarConfigs || {}),
+    ...(prev.calendarConfigs || {}),
+    ...(migrated.calendarConfigs || {}),
+  };
+
   const next: FamilySettings = {
     ...prev,
     ...migrated,
@@ -370,6 +412,7 @@ function mergeCloudSettings(
     deletedCalendarIds: Array.from(deletedCal),
     savedCalendars: Array.from(savedMap.values()),
     carCalendarIds,
+    calendarConfigs: mergedConfigs,
     googleCalendarConfig: resolvedConfig,
   };
 
@@ -424,6 +467,14 @@ export const mergeCalendarsList = (
       });
     });
   }
+
+  // 3b. Sørg for at standardkalendere fra initialSettings alltid er med (hvis ikke slettet)
+  (initialSettings.savedCalendars || []).forEach((c) => {
+    if (deletedSet.has(c.id)) return;
+    if (!map.has(c.id)) {
+      map.set(c.id, { ...c });
+    }
+  });
 
   // 4. Ensure active configured calendar exists in the list (unless deleted or demo)
   if (activeConfig?.calendarId && !deletedSet.has(activeConfig.calendarId)) {
@@ -537,22 +588,31 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const isGoogleConnected = Boolean(googleAccessToken);
 
-  const feedsImported = useRef(false);
+  const syncedFeedsRef = useRef<string>('');
   useEffect(() => {
-    if (!isLoaded || feedsImported.current) return;
+    if (!isLoaded) return;
     const feeds = (settings.savedCalendars || []).filter(
       (cal) => cal.icalUrl && !(settings.disabledCalendarIds || []).includes(cal.id)
     );
     if (feeds.length === 0) return;
-    const alreadyShown = (calId: string) =>
-      calendarEvents.some((ev) => ev.calendarId === calId || ev.googleCalendarId === calId);
-    if (feeds.every((cal) => alreadyShown(cal.id))) {
-      feedsImported.current = true;
-      return;
-    }
-    feedsImported.current = true;
+    const feedKey = feeds.map((f) => `${f.id}:${f.icalUrl}`).sort().join('|');
+    if (syncedFeedsRef.current === feedKey) return;
+    syncedFeedsRef.current = feedKey;
     void syncTwoWayWithGoogle();
-  }, [isLoaded]);
+  }, [isLoaded, settings.savedCalendars, settings.disabledCalendarIds]);
+
+  // Jevnlig automatisk oppdatering i bakgrunnen (hvert 15. minutt) for veggskjermer og live-brukere
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const feeds = (settings.savedCalendars || []).filter(
+        (cal) => cal.icalUrl && !(settings.disabledCalendarIds || []).includes(cal.id)
+      );
+      if (feeds.length > 0) {
+        void syncTwoWayWithGoogle();
+      }
+    }, 15 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [settings.savedCalendars, settings.disabledCalendarIds]);
 
   // Save to localStorage when state updates
   useEffect(() => {
@@ -620,22 +680,18 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return merged;
       });
       toAdd.forEach((r) => {
-        if (firebaseUser) {
-          saveWeeklyPointsRecordToFirestore(r).catch(console.error);
-        }
+        saveWeeklyPointsRecordToFirestore(r).catch(console.error);
       });
     }
 
     if (settings.lastFinalizedPointsWeekKey !== latestKey) {
       setSettings((prev) => {
         const updated = { ...prev, lastFinalizedPointsWeekKey: latestKey };
-        if (firebaseUser) {
-          saveSettingsToFirestore(updated).catch(console.error);
-        }
+        saveSettingsToFirestore(updated).catch(console.error);
         return updated;
       });
     }
-  }, [isLoaded, members, taskInstances, settings.lastFinalizedPointsWeekKey, firebaseUser]);
+  }, [isLoaded, members, taskInstances, settings.lastFinalizedPointsWeekKey]);
 
   // Auto-sync car reservations into calendarEvents so all reservations always appear in the calendar
   useEffect(() => {
@@ -677,182 +733,187 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     if (missingEvents.length > 0) {
       setCalendarEvents((prev) => [...missingEvents, ...prev]);
-      if (firebaseUser) {
-        missingEvents.forEach((ev) => {
-          saveCalendarEventToFirestore(ev).catch(console.error);
-        });
-      }
+      missingEvents.forEach((ev) => {
+        saveCalendarEventToFirestore(ev).catch(console.error);
+      });
     }
-  }, [isLoaded, reservations, vehicles, firebaseUser]);
+  }, [isLoaded, reservations, vehicles]);
 
   // Firebase Auth Listener & Firestore Real-Time Sync
   useEffect(() => {
     let unsubs: (() => void)[] = [];
 
-    if (!auth) {
-      setIsFirebaseAuthReady(true);
-      setIsFirestoreConnected(false);
-      setIsFirestoreSyncing(false);
-      return;
-    }
-
-    const authUnsubscribe = onAuthStateChanged(auth, async (user) => {
-      setFirebaseUser(user);
-      setIsFirebaseAuthReady(true);
-
+    const startFirestoreSync = async () => {
       // Clean up previous Firestore listeners if any
       unsubs.forEach((u) => u());
       unsubs = [];
 
-      if (user) {
-        setIsFirestoreSyncing(true);
-        console.log('Firebase Auth user active:', user.email);
+      setIsFirestoreSyncing(true);
 
-        try {
-          // Seed only the already-cleaned local dataset. Never push the built-in demo family
-          // into an empty cloud just because the app was opened.
-          const seedFrom = computeBootState();
-          await seedInitialDataIfEmpty({
-            members: seedFrom.members,
-            vehicles: seedFrom.vehicles,
-            reservations: seedFrom.reservations,
-            calendarEvents: seedFrom.calendarEvents,
-            taskTemplates: seedFrom.taskTemplates,
-            taskInstances: seedFrom.taskInstances,
-            settings: seedFrom.settings,
-          });
+      try {
+        const seedFrom = computeBootState();
+        await seedInitialDataIfEmpty({
+          members: seedFrom.members,
+          vehicles: seedFrom.vehicles,
+          reservations: seedFrom.reservations,
+          calendarEvents: seedFrom.calendarEvents,
+          taskTemplates: seedFrom.taskTemplates,
+          taskInstances: seedFrom.taskInstances,
+          settings: seedFrom.settings,
+        });
 
-          // Subscribe to live Firestore changes across all clients
-          const uMembers = subscribeMembers((cloudMembers) => {
-            if (!cloudMembers) return;
-            const deleted = new Set(settingsRef.current.deletedMemberIds || []);
-            if (!allowDemoRef.current) DEMO_MEMBER_IDS.forEach((id) => deleted.add(id));
-            cloudMembers
-              .filter((member) => deleted.has(member.id))
-              .forEach((member) => {
-                deleteMemberFromFirestore(member.id).catch(() => {});
-              });
-            const byId = new Map<string, FamilyMember>();
-            membersRef.current.forEach((member) => {
-              if (!deleted.has(member.id)) byId.set(member.id, member);
+        // 1. Members
+        const uMembers = subscribeMembers((cloudMembers) => {
+          if (!cloudMembers) return;
+          const deleted = new Set(settingsRef.current.deletedMemberIds || []);
+          if (!allowDemoRef.current) DEMO_MEMBER_IDS.forEach((id) => deleted.add(id));
+          cloudMembers
+            .filter((member) => deleted.has(member.id))
+            .forEach((member) => {
+              deleteMemberFromFirestore(member.id).catch(() => {});
             });
-            cloudMembers.forEach((member) => {
-              if (!deleted.has(member.id)) byId.set(member.id, member);
-            });
-            const merged = Array.from(byId.values());
-            const next = merged.length > 0 ? merged : productionMemberFallback();
-            setMembers(next);
-            setIsFirestoreConnected(true);
-            next.forEach((member) => {
-              if (!cloudMembers.some((cloudMember) => cloudMember.id === member.id)) {
-                saveMemberToFirestore(member).catch(() => {});
-              }
-            });
+          const byId = new Map<string, FamilyMember>();
+          membersRef.current.forEach((member) => {
+            if (!deleted.has(member.id)) byId.set(member.id, member);
           });
-          unsubs.push(uMembers);
-
-          const uVehicles = subscribeVehicles((cloudVehicles) => {
-            if (cloudVehicles && cloudVehicles.length > 0) {
-              setVehicles(cloudVehicles);
-            }
+          cloudMembers.forEach((member) => {
+            if (!deleted.has(member.id)) byId.set(member.id, member);
           });
-          unsubs.push(uVehicles);
-
-          const uReservations = subscribeReservations((cloudRes) => {
-            if (!cloudRes) return;
-            if (!allowDemoRef.current) {
-              cloudRes.filter(isDemoReservation).forEach((reservation) => {
-                deleteReservationFromFirestore(reservation.id).catch(() => {});
-              });
-            }
-            setReservations((local) => {
-              const keep = (reservation: CarReservation) =>
-                allowDemoRef.current || !isDemoReservation(reservation);
-              const byId = new Map<string, CarReservation>();
-              local.filter(keep).forEach((reservation) => byId.set(reservation.id, reservation));
-              cloudRes.filter(keep).forEach((reservation) => byId.set(reservation.id, reservation));
-              return Array.from(byId.values());
-            });
-          });
-          unsubs.push(uReservations);
-
-          const uCalendar = subscribeCalendarEvents((cloudCal) => {
-            if (!cloudCal) return;
-            if (!allowDemoRef.current) {
-              cloudCal.filter(isDemoCalendarEvent).forEach((event) => {
-                deleteCalendarEventFromFirestore(event.id).catch(() => {});
-              });
-            }
-            setCalendarEvents((local) => {
-              const keep = (event: CalendarEvent) => allowDemoRef.current || !isDemoCalendarEvent(event);
-              const byId = new Map<string, CalendarEvent>();
-              local.filter(keep).forEach((event) => byId.set(event.id, event));
-              cloudCal.filter(keep).forEach((event) => byId.set(event.id, event));
-              return Array.from(byId.values());
-            });
-          });
-          unsubs.push(uCalendar);
-
-          const uTaskTemplates = subscribeTaskTemplates((cloudTmpl) => {
-            if (cloudTmpl && cloudTmpl.length > 0) {
-              setTaskTemplates(migrateTaskTemplates(cloudTmpl));
-            }
-          });
-          unsubs.push(uTaskTemplates);
-
-          const uTaskInstances = subscribeTaskInstances((cloudInst) => {
-            if (cloudInst && cloudInst.length > 0) {
-              setTaskInstances(cloudInst);
-            }
-          });
-          unsubs.push(uTaskInstances);
-
-          const uSettings = subscribeSettings((cloudSettings) => {
-            if (!cloudSettings) return;
-            const { next, persist } = mergeCloudSettings(settingsRef.current, cloudSettings, allowDemoRef.current);
-            settingsRef.current = next;
-            setSettings(next);
-            setAvailableGoogleCalendars((calendars) =>
-              mergeCalendarsList(
-                calendars,
-                next.savedCalendars,
-                next.googleCalendarConfig,
-                next.disableMockData,
-                next.disabledCalendarIds,
-                next.deletedCalendarIds,
-                next.carCalendarIds,
-                next.calendarPrivacyModes
-              )
-            );
-            if (!persist) return;
-            const serialized = JSON.stringify(next);
-            if (lastPushedSettingsRef.current === serialized) return;
-            lastPushedSettingsRef.current = serialized;
-            saveSettingsToFirestore(next).catch(console.error);
-          });
-          unsubs.push(uSettings);
-
-          const uWeeklyPoints = subscribeWeeklyPoints((cloudRecords) => {
-            if (cloudRecords && cloudRecords.length > 0) {
-              setWeeklyPointsRecords(cloudRecords);
-            }
-          });
-          unsubs.push(uWeeklyPoints);
-
+          const merged = Array.from(byId.values());
+          const next = merged.length > 0 ? merged : productionMemberFallback();
+          setMembers(next);
           setIsFirestoreConnected(true);
-        } catch (syncErr) {
-          console.warn('Firestore initial sync note:', syncErr);
-        } finally {
-          setIsFirestoreSyncing(false);
-        }
-      } else {
-        setIsFirestoreConnected(false);
+          next.forEach((member) => {
+            if (!cloudMembers.some((cloudMember) => cloudMember.id === member.id)) {
+              saveMemberToFirestore(member).catch(() => {});
+            }
+          });
+        });
+        unsubs.push(uMembers);
+
+        // 2. Vehicles
+        const uVehicles = subscribeVehicles((cloudVehicles) => {
+          if (cloudVehicles && cloudVehicles.length > 0) {
+            setVehicles(cloudVehicles);
+          }
+        });
+        unsubs.push(uVehicles);
+
+        // 3. Reservations
+        const uReservations = subscribeReservations((cloudRes) => {
+          if (!cloudRes) return;
+          if (!allowDemoRef.current) {
+            cloudRes.filter(isDemoReservation).forEach((reservation) => {
+              deleteReservationFromFirestore(reservation.id).catch(() => {});
+            });
+          }
+          setReservations((local) => {
+            const keep = (reservation: CarReservation) =>
+              allowDemoRef.current || !isDemoReservation(reservation);
+            const byId = new Map<string, CarReservation>();
+            local.filter(keep).forEach((reservation) => byId.set(reservation.id, reservation));
+            cloudRes.filter(keep).forEach((reservation) => byId.set(reservation.id, reservation));
+            return Array.from(byId.values());
+          });
+        });
+        unsubs.push(uReservations);
+
+        // 4. Calendar Events
+        const uCalendar = subscribeCalendarEvents((cloudCal) => {
+          if (!cloudCal) return;
+          if (!allowDemoRef.current) {
+            cloudCal.filter(isDemoCalendarEvent).forEach((event) => {
+              deleteCalendarEventFromFirestore(event.id).catch(() => {});
+            });
+          }
+          setCalendarEvents((local) => {
+            const keep = (event: CalendarEvent) => allowDemoRef.current || !isDemoCalendarEvent(event);
+            const byId = new Map<string, CalendarEvent>();
+            local.filter(keep).forEach((event) => byId.set(event.id, event));
+            cloudCal.filter(keep).forEach((event) => byId.set(event.id, event));
+            return Array.from(byId.values());
+          });
+        });
+        unsubs.push(uCalendar);
+
+        // 5. Task Templates
+        const uTaskTemplates = subscribeTaskTemplates((cloudTmpl) => {
+          if (cloudTmpl && cloudTmpl.length > 0) {
+            setTaskTemplates(migrateTaskTemplates(cloudTmpl));
+          }
+        });
+        unsubs.push(uTaskTemplates);
+
+        // 6. Task Instances
+        const uTaskInstances = subscribeTaskInstances((cloudInst) => {
+          if (cloudInst && cloudInst.length > 0) {
+            setTaskInstances(cloudInst);
+          }
+        });
+        unsubs.push(uTaskInstances);
+
+        // 7. Settings
+        const uSettings = subscribeSettings((cloudSettings) => {
+          if (!cloudSettings) {
+            saveSettingsToFirestore(settingsRef.current).catch(console.error);
+            return;
+          }
+          const { next, persist } = mergeCloudSettings(settingsRef.current, cloudSettings, allowDemoRef.current);
+          settingsRef.current = next;
+          setSettings(next);
+          setAvailableGoogleCalendars((calendars) =>
+            mergeCalendarsList(
+              calendars,
+              next.savedCalendars,
+              next.googleCalendarConfig,
+              next.disableMockData,
+              next.disabledCalendarIds,
+              next.deletedCalendarIds,
+              next.carCalendarIds,
+              next.calendarPrivacyModes
+            )
+          );
+          if (!persist) return;
+          const serialized = JSON.stringify(next);
+          if (lastPushedSettingsRef.current === serialized) return;
+          lastPushedSettingsRef.current = serialized;
+          saveSettingsToFirestore(next).catch(console.error);
+        });
+        unsubs.push(uSettings);
+
+        // 8. Weekly Points
+        const uWeeklyPoints = subscribeWeeklyPoints((cloudRecords) => {
+          if (cloudRecords && cloudRecords.length > 0) {
+            setWeeklyPointsRecords(cloudRecords);
+          }
+        });
+        unsubs.push(uWeeklyPoints);
+
+        setIsFirestoreConnected(true);
+      } catch (syncErr) {
+        console.warn('Firestore initial sync note:', syncErr);
+      } finally {
         setIsFirestoreSyncing(false);
       }
-    });
+    };
+
+    void startFirestoreSync();
+
+    let authUnsubscribe: (() => void) | undefined;
+    if (auth) {
+      authUnsubscribe = onAuthStateChanged(auth, async (user) => {
+        setFirebaseUser(user);
+        setIsFirebaseAuthReady(true);
+        if (user) {
+          console.log('Firebase Auth user active:', user.email);
+        }
+      });
+    } else {
+      setIsFirebaseAuthReady(true);
+    }
 
     return () => {
-      authUnsubscribe();
+      if (authUnsubscribe) authUnsubscribe();
       unsubs.forEach((u) => u());
     };
   }, []);
@@ -878,7 +939,6 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const pushAllToFirestore = async () => {
-    if (!firebaseUser) return;
     try {
       setIsFirestoreSyncing(true);
       // Save all members
@@ -1087,15 +1147,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
 
       setCalendarEvents((prev) => [calEvent, ...prev.filter((e) => e.id !== calEventId && e.vehicleReservationId !== newResId)]);
-
-      if (firebaseUser) {
-        saveCalendarEventToFirestore(calEvent).catch(console.error);
-      }
+      saveCalendarEventToFirestore(calEvent).catch(console.error);
     }
 
-    if (firebaseUser) {
-      saveReservationToFirestore(newReservation).catch(console.error);
-    }
+    saveReservationToFirestore(newReservation).catch(console.error);
 
     return {
       success: isAvailable,
@@ -1115,13 +1170,11 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           e.id !== `cal_res_${id}`
       )
     );
-    if (firebaseUser) {
-      deleteReservationFromFirestore(id).catch(console.error);
-      if (resToCancel?.calendarEventId) {
-        deleteCalendarEventFromFirestore(resToCancel.calendarEventId).catch(console.error);
-      } else {
-        deleteCalendarEventFromFirestore(`cal_res_${id}`).catch(console.error);
-      }
+    deleteReservationFromFirestore(id).catch(console.error);
+    if (resToCancel?.calendarEventId) {
+      deleteCalendarEventFromFirestore(resToCancel.calendarEventId).catch(console.error);
+    } else {
+      deleteCalendarEventFromFirestore(`cal_res_${id}`).catch(console.error);
     }
   };
 
@@ -1182,9 +1235,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     setCalendarEvents((prev) => [...prev, newEvent]);
-    if (firebaseUser) {
-      saveCalendarEventToFirestore(newEvent).catch(console.error);
-    }
+    saveCalendarEventToFirestore(newEvent).catch(console.error);
     return { event: newEvent, reservation };
   };
 
@@ -1197,9 +1248,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       cancelReservation(resId);
     }
 
-    if (firebaseUser) {
-      deleteCalendarEventFromFirestore(id).catch(console.error);
-    }
+    deleteCalendarEventFromFirestore(id).catch(console.error);
 
     // Google Calendar is read-only: Sletting i appen rører ALDRI din eksterne Google Kalender
     setCalendarEvents((prev) => prev.filter((e) => e.id !== id));
@@ -1308,9 +1357,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.error('Kunne ikke lagre til localStorage:', e);
     }
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
 
     if (!isUrl) return { importedCount: 0 };
 
@@ -1374,9 +1421,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.error('Kunne ikke lagre til localStorage:', e);
     }
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const toggleCalendarViewVisibility = async (id: string, visible: boolean): Promise<void> => {
@@ -1416,9 +1461,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettings(newSettings);
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const toggleCalendarDisabled = async (id: string, active: boolean): Promise<void> => {
@@ -1445,9 +1488,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettings(newSettings);
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const toggleCarCalendar = async (id: string): Promise<void> => {
@@ -1470,9 +1511,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettings(newSettings);
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const setCalendarPrivacyMode = async (id: string, mode: 'full' | 'busy_only'): Promise<void> => {
@@ -1519,9 +1558,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettings(newSettings);
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const updateCalendarSettings = async (
@@ -1762,13 +1799,11 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
 
     setCalendarEvents(updatedEvents);
-    if (firebaseUser) {
-      updatedEvents
-        .filter((e) => e.calendarId === targetId || e.googleCalendarId === targetId || e.calendarId === id || e.googleCalendarId === id)
-        .forEach((e) => {
-          saveCalendarEventToFirestore(e).catch(console.error);
-        });
-    }
+    updatedEvents
+      .filter((e) => e.calendarId === targetId || e.googleCalendarId === targetId || e.calendarId === id || e.googleCalendarId === id)
+      .forEach((e) => {
+        saveCalendarEventToFirestore(e).catch(console.error);
+      });
 
     setReservations((prev) => {
       const remaining = prev.filter((r) => {
@@ -1785,11 +1820,9 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return [...remaining, ...reservationsToUpsert];
     });
 
-    if (firebaseUser) {
-      reservationsToUpsert.forEach((r) => {
-        saveReservationToFirestore(r).catch(console.error);
-      });
-    }
+    reservationsToUpsert.forEach((r) => {
+      saveReservationToFirestore(r).catch(console.error);
+    });
 
     const newSettings: FamilySettings = {
       ...settings,
@@ -1814,9 +1847,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       console.error('Kunne ikke lagre til localStorage:', e);
     }
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const removeCustomGoogleCalendar = async (id: string): Promise<void> => {
@@ -1866,9 +1897,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     setSettings(newSettings);
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const addTestMember = (role: Role = 'child', name?: string) => {
@@ -2019,9 +2048,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     removedMembers.forEach((member) => {
       deleteMemberFromFirestore(member.id).catch(() => {});
     });
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
   };
 
   const clearAllMockData = async (): Promise<void> => {
@@ -2060,9 +2087,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setSettings(newSettings);
 
-    if (firebaseUser) {
-      await saveSettingsToFirestore(newSettings).catch(console.error);
-    }
+    await saveSettingsToFirestore(newSettings).catch(console.error);
 
     // Automatically trigger sync for this chosen calendar if connected
     const token = googleAccessToken || localStorage.getItem('gcal_access_token');
@@ -2332,7 +2357,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
     );
 
-    if (firebaseUser && updatedInst) {
+    if (updatedInst) {
       saveTaskInstanceToFirestore(updatedInst).catch(console.error);
     }
   };
@@ -2355,7 +2380,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       })
     );
 
-    if (firebaseUser && updatedInst) {
+    if (updatedInst) {
       saveTaskInstanceToFirestore(updatedInst).catch(console.error);
     }
   };
@@ -2385,10 +2410,8 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return updated;
     });
 
-    if (firebaseUser) {
-      if (completedInstance) saveTaskInstanceToFirestore(completedInstance).catch(console.error);
-      if (nextInstance) saveTaskInstanceToFirestore(nextInstance).catch(console.error);
-    }
+    if (completedInstance) saveTaskInstanceToFirestore(completedInstance).catch(console.error);
+    if (nextInstance) saveTaskInstanceToFirestore(nextInstance).catch(console.error);
   };
 
   const claimSuggestedTasks = (instanceIds: string[], memberId?: string) => {
@@ -2419,20 +2442,12 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       id: templateId,
     };
     setTaskTemplates((prev) => [...prev, newTemplate]);
+    saveTaskTemplateToFirestore(newTemplate).catch(console.error);
 
     if (newTemplate.isActive) {
       const newInstance = createTaskInstanceFromTemplate(newTemplate, new Date());
       setTaskInstances((prev) => [...prev, newInstance]);
-
-      if (firebaseUser) {
-        saveTaskTemplateToFirestore(newTemplate).catch(console.error);
-        saveTaskInstanceToFirestore(newInstance).catch(console.error);
-        return;
-      }
-    }
-
-    if (firebaseUser) {
-      saveTaskTemplateToFirestore(newTemplate).catch(console.error);
+      saveTaskInstanceToFirestore(newInstance).catch(console.error);
     }
   };
 
@@ -2447,16 +2462,14 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return tmpl;
       })
     );
-    if (firebaseUser && updatedTmpl) {
+    if (updatedTmpl) {
       saveTaskTemplateToFirestore(updatedTmpl).catch(console.error);
     }
   };
 
   const deleteTaskTemplate = (id: string) => {
     setTaskTemplates((prev) => prev.filter((tmpl) => tmpl.id !== id));
-    if (firebaseUser) {
-      deleteTaskTemplateFromFirestore(id).catch(console.error);
-    }
+    deleteTaskTemplateFromFirestore(id).catch(console.error);
   };
 
   const restartTaskPool = () => {
@@ -2464,14 +2477,12 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const freshInstances = buildRestartedTaskInstances(taskTemplates, new Date());
     setTaskInstances(freshInstances);
 
-    if (firebaseUser) {
-      oldInstanceIds.forEach((id) => {
-        deleteTaskInstanceFromFirestore(id).catch(console.error);
-      });
-      freshInstances.forEach((inst) => {
-        saveTaskInstanceToFirestore(inst).catch(console.error);
-      });
-    }
+    oldInstanceIds.forEach((id) => {
+      deleteTaskInstanceFromFirestore(id).catch(console.error);
+    });
+    freshInstances.forEach((inst) => {
+      saveTaskInstanceToFirestore(inst).catch(console.error);
+    });
   };
 
   // Family Members Management
@@ -2481,9 +2492,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       id: 'member_' + Date.now().toString(36),
     };
     setMembers((prev) => [...prev, newMember]);
-    if (firebaseUser) {
-      saveMemberToFirestore(newMember).catch(console.error);
-    }
+    saveMemberToFirestore(newMember).catch(console.error);
   };
 
   const updateMember = (id: string, updates: Partial<FamilyMember>) => {
@@ -2497,7 +2506,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return m;
       })
     );
-    if (firebaseUser && updatedMember) {
+    if (updatedMember) {
       saveMemberToFirestore(updatedMember).catch(console.error);
     }
   };
@@ -2510,12 +2519,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         deletedMemberIds: Array.from(new Set([...(prev.deletedMemberIds || []), id])),
       };
       settingsRef.current = next;
-      if (firebaseUser) saveSettingsToFirestore(next).catch(console.error);
+      saveSettingsToFirestore(next).catch(console.error);
       return next;
     });
-    if (firebaseUser) {
-      deleteMemberFromFirestore(id).catch(console.error);
-    }
+    deleteMemberFromFirestore(id).catch(console.error);
   };
 
   // Vehicles
@@ -2525,9 +2532,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       id: 'veh_' + Date.now().toString(36),
     };
     setVehicles((prev) => [...prev, newVehicle]);
-    if (firebaseUser) {
-      saveVehicleToFirestore(newVehicle).catch(console.error);
-    }
+    saveVehicleToFirestore(newVehicle).catch(console.error);
   };
 
   const updateVehicle = (id: string, updates: Partial<Vehicle>) => {
@@ -2541,7 +2546,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return v;
       })
     );
-    if (firebaseUser && updatedVeh) {
+    if (updatedVeh) {
       saveVehicleToFirestore(updatedVeh).catch(console.error);
     }
   };
@@ -2550,9 +2555,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const updateSettings = (updates: Partial<FamilySettings>) => {
     setSettings((prev) => {
       const updated = { ...prev, ...updates };
-      if (firebaseUser) {
-        saveSettingsToFirestore(updated).catch(console.error);
-      }
+      saveSettingsToFirestore(updated).catch(console.error);
       return updated;
     });
   };

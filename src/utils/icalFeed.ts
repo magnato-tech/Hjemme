@@ -402,10 +402,45 @@ export async function fetchIcalText(icalUrl: string): Promise<string> {
   if (!isAllowedIcalUrl(target)) {
     throw new Error('Kalenderadressen må være en https-adresse til en iCal-fil.');
   }
-  const response = await fetch(`/api/ical?url=${encodeURIComponent(target)}`);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(text.trim() || `Kunne ikke hente kalenderen (${response.status}).`);
+
+  // 1. Forsøk den interne Vite / Express-proxyen
+  try {
+    const response = await fetch(`/api/ical?url=${encodeURIComponent(target)}`);
+    if (response.ok) {
+      const text = await response.text();
+      if (text.includes('BEGIN:VCALENDAR')) {
+        return text;
+      }
+    }
+  } catch (err) {
+    console.warn('Lokal /api/ical svarte ikke, forsøker fallback...', err);
   }
-  return text;
+
+  // 2. Fallback til allorigins proxy
+  try {
+    const fallbackResp = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`);
+    if (fallbackResp.ok) {
+      const text = await fallbackResp.text();
+      if (text.includes('BEGIN:VCALENDAR')) {
+        return text;
+      }
+    }
+  } catch (err) {
+    console.warn('Allorigins proxy feilet:', err);
+  }
+
+  // 3. Fallback til corsproxy.io
+  try {
+    const corsProxyResp = await fetch(`https://corsproxy.io/?url=${encodeURIComponent(target)}`);
+    if (corsProxyResp.ok) {
+      const text = await corsProxyResp.text();
+      if (text.includes('BEGIN:VCALENDAR')) {
+        return text;
+      }
+    }
+  } catch (err) {
+    console.warn('Corsproxy feilet:', err);
+  }
+
+  throw new Error('Kunne ikke hente kalenderen fra Google Kalender. Sjekk at iCal-adressen er gyldig og aktiv.');
 }

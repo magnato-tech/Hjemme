@@ -9,7 +9,7 @@ service cloud.firestore {
 
     // Connectivity test document
     match /test/{docId} {
-      allow read: if isFamilyMember();
+      allow read, write: if true;
     }
 
     // Global hardened primitives & helpers
@@ -21,7 +21,7 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // Godkjente familiemedlemmer — legg til e-post når de får Google-konto
+    // Godkjente familiemedlemmer — e-post når de logger inn med Google
     function familyEmails() {
       return [
         'magnar.totland@gmail.com',
@@ -37,7 +37,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() > 0 && id.size() <= 256;
     }
 
     function incoming() {
@@ -69,21 +69,21 @@ service cloud.firestore {
 
     // Validation Blueprint for CarReservation
     function isValidReservation(data) {
-      return data.id is string && data.id.size() <= 128 &&
+      return data.id is string && data.id.size() <= 256 &&
              data.vehicleId is string && data.vehicleId.size() <= 128 &&
              data.memberId is string && data.memberId.size() <= 128 &&
              data.startTime is string && data.startTime.size() <= 50 &&
              data.endTime is string && data.endTime.size() <= 50 &&
-             data.purpose is string && data.purpose.size() <= 250 &&
+             data.purpose is string && data.purpose.size() <= 300 &&
              data.status in ['confirmed', 'pending_conflict', 'cancelled'] &&
              data.familyId == 'totland';
     }
 
     // Validation Blueprint for CalendarEvent
     function isValidCalendarEvent(data) {
-      return data.id is string && data.id.size() <= 128 &&
+      return data.id is string && data.id.size() <= 256 &&
              data.memberId is string && data.memberId.size() <= 128 &&
-             data.title is string && data.title.size() <= 150 &&
+             data.title is string && data.title.size() <= 300 &&
              data.startTime is string && data.startTime.size() <= 50 &&
              data.endTime is string && data.endTime.size() <= 50 &&
              data.familyId == 'totland';
@@ -92,9 +92,8 @@ service cloud.firestore {
     // Validation Blueprint for TaskTemplate
     function isValidTaskTemplate(data) {
       return data.id is string && data.id.size() <= 128 &&
-             data.title is string && data.title.size() <= 100 &&
+             data.title is string && data.title.size() <= 150 &&
              data.points is number && data.points >= 0 && data.points <= 50 &&
-             data.recurrence in ['weekly', 'biweekly', 'monthly', 'daily', 'once'] &&
              data.isActive is bool &&
              data.familyId == 'totland';
     }
@@ -103,7 +102,7 @@ service cloud.firestore {
     function isValidTaskInstance(data) {
       return data.id is string && data.id.size() <= 128 &&
              data.templateId is string && data.templateId.size() <= 128 &&
-             data.title is string && data.title.size() <= 100 &&
+             data.title is string && data.title.size() <= 150 &&
              data.points is number && data.points >= 0 && data.points <= 50 &&
              data.weekNumber is number && data.weekNumber >= 1 && data.weekNumber <= 53 &&
              data.year is number &&
@@ -117,67 +116,66 @@ service cloud.firestore {
              data.familyId == 'totland';
     }
 
+    // Validation Blueprint for WeeklyPointsRecord
+    function isValidWeeklyPoints(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.memberId is string && data.memberId.size() <= 128 &&
+             data.familyId == 'totland';
+    }
+
     // 1. Members collection
     match /members/{memberId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(memberId) && isFamilyMember() && isValidMember(incoming());
-      allow delete: if isValidId(memberId) && isAdmin();
+      allow get, list: if true;
+      allow create, update: if isValidId(memberId) && isValidMember(incoming());
+      allow delete: if isValidId(memberId);
     }
 
     // 2. Vehicles collection
     match /vehicles/{vehicleId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(vehicleId) && isFamilyMember() && isValidVehicle(incoming());
-      allow delete: if isValidId(vehicleId) && isAdmin();
+      allow get, list: if true;
+      allow create, update: if isValidId(vehicleId) && isValidVehicle(incoming());
+      allow delete: if isValidId(vehicleId);
     }
 
     // 3. Reservations collection
     match /reservations/{reservationId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create: if isValidId(reservationId) && isFamilyMember() && isValidReservation(incoming());
-      allow update: if isValidId(reservationId) && isFamilyMember() && isValidReservation(incoming()) && incoming().memberId == existing().memberId;
-      allow delete: if isValidId(reservationId) && isFamilyMember() && (existing().memberId == request.auth.uid || isAdmin());
+      allow get, list: if true;
+      allow create, update: if isValidId(reservationId) && isValidReservation(incoming());
+      allow delete: if isValidId(reservationId);
     }
 
     // 4. CalendarEvents collection
     match /calendarEvents/{eventId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(eventId) && isFamilyMember() && isValidCalendarEvent(incoming());
-      allow delete: if isValidId(eventId) && isFamilyMember();
+      allow get, list: if true;
+      allow create, update: if isValidId(eventId) && isValidCalendarEvent(incoming());
+      allow delete: if isValidId(eventId);
     }
 
     // 5. TaskTemplates collection
     match /taskTemplates/{templateId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(templateId) && isFamilyMember() && isValidTaskTemplate(incoming());
-      allow delete: if isValidId(templateId) && isAdmin();
+      allow get, list: if true;
+      allow create, update: if isValidId(templateId) && isValidTaskTemplate(incoming());
+      allow delete: if isValidId(templateId);
     }
 
     // 6. TaskInstances collection
     match /taskInstances/{instanceId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create: if isValidId(instanceId) && isFamilyMember() && isValidTaskInstance(incoming());
-      allow update: if isValidId(instanceId) && isFamilyMember() && isValidTaskInstance(incoming()) && (
-        isAdmin() ||
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'status', 'claimedByMemberId', 'claimedByName', 'claimedAt',
-          'completedAt', 'completedByMemberId', 'completedByName'
-        ])
-      );
-      allow delete: if isValidId(instanceId) && isAdmin();
+      allow get, list: if true;
+      allow create, update: if isValidId(instanceId) && isValidTaskInstance(incoming());
+      allow delete: if isValidId(instanceId);
     }
 
     // 7. Settings collection
     match /settings/{settingsId} {
-      allow get: if isFamilyMember();
-      allow list: if isFamilyMember() && resource.data.familyId == 'totland';
-      allow create, update: if isValidId(settingsId) && isFamilyMember() && isValidSettings(incoming());
+      allow get, list: if true;
+      allow create, update: if isValidId(settingsId) && isValidSettings(incoming());
+      allow delete: if false;
+    }
+
+    // 8. Weekly Points collection
+    match /weeklyPoints/{recordId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(recordId) && isValidWeeklyPoints(incoming());
       allow delete: if false;
     }
   }

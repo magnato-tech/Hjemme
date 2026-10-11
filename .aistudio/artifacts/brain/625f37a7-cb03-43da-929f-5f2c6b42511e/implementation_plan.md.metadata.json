@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan og oversikt over miljøvariabler og status for applikasjonens konfigurasjon (Firebase, Google OAuth og Firestore).",
-  "updatedAt":  "2026-10-11T19:49:01.526140701Z",
+  "summary":  "Revidert implementeringsplan med Magnars to spesifikke iCal-lenker (Privat og Jobb), automatisk felles skylagring i Firestore, synkronisering på tvers av enheter uten innloggingskrav på veggskjerm/live, og oppdatering av sikkerhetsregler.",
+  "updatedAt":  "2026-10-11T20:51:11.139611746Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
