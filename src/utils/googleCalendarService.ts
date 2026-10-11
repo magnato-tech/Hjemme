@@ -230,13 +230,14 @@ export async function requestGoogleAccessToken(customClientId?: string): Promise
  */
 export const SAMPLE_GOOGLE_CALENDARS: GoogleCalendarItem[] = [
   {
-    id: 'primary',
-    summary: 'Magnar Totland (Primær)',
-    description: 'Hovedkalender for magnar.totland@gmail.com',
+    id: 'sample_cal_primary',
+    summary: 'Magnar Totland (Primær - Eksempel)',
+    description: 'Eksempelkalender for magnar.totland@gmail.com',
     primary: true,
     backgroundColor: '#0284c7',
     foregroundColor: '#ffffff',
     accessRole: 'owner',
+    isMock: true,
   },
   {
     id: 'c_jobb_totland@group.calendar.google.com',
@@ -246,6 +247,7 @@ export const SAMPLE_GOOGLE_CALENDARS: GoogleCalendarItem[] = [
     backgroundColor: '#f59e0b',
     foregroundColor: '#ffffff',
     accessRole: 'owner',
+    isMock: true,
   },
   {
     id: 'c_bil_familie@group.calendar.google.com',
@@ -255,6 +257,7 @@ export const SAMPLE_GOOGLE_CALENDARS: GoogleCalendarItem[] = [
     backgroundColor: '#ea580c',
     foregroundColor: '#ffffff',
     accessRole: 'owner',
+    isMock: true,
   },
   {
     id: 'c_familie_felles@group.calendar.google.com',
@@ -264,6 +267,7 @@ export const SAMPLE_GOOGLE_CALENDARS: GoogleCalendarItem[] = [
     backgroundColor: '#7c3aed',
     foregroundColor: '#ffffff',
     accessRole: 'owner',
+    isMock: true,
   },
 ];
 

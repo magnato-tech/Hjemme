@@ -43,6 +43,7 @@ export interface CarReservation {
   bufferAfterMinutes?: number;
   notes?: string;
   isConfidential?: boolean; // if confidential, hide details (e.g. pastor consultations)
+  isMock?: boolean;
   createdAt: string;
 }
 
@@ -70,6 +71,7 @@ export interface CalendarEvent {
   privacyMode?: 'full' | 'busy_only';
   isAllDay?: boolean;
   status?: string;
+  isMock?: boolean;
 }
 
 export interface CalendarConnection {
@@ -208,6 +210,7 @@ export interface GoogleCalendarItem {
   bufferAfterMinutes?: number;
   excludedKeywords?: string[];
   activityOverrides?: Record<string, ActivityOverride>;
+  isMock?: boolean;
 }
 
 export interface GoogleCalendarConfig {

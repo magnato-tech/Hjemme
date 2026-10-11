@@ -129,28 +129,11 @@ export const initialSettings: FamilySettings = {
     applyBufferToAllLocations: true,
     autoDetectLocationFromTitle: true,
   },
-  googleCalendarConfig: {
-    calendarId: 'primary',
-    calendarName: 'Magnar Totland (Primær)',
-    autoReserveCar: true,
-    filterMode: 'work_only',
-    lastSyncedAt: new Date().toISOString(),
-  },
+  savedCalendars: [],
+  disableMockData: true,
 };
 
-export const initialCalendarConnections: CalendarConnection[] = [
-  {
-    id: 'cal_conn_1',
-    memberId: 'member_magnar',
-    calendarName: 'Magnar – Jobbkalender (Google)',
-    calendarEmail: 'magnar.totland@gmail.com',
-    isConnected: true,
-    autoCarReservationEnabled: true,
-    defaultBufferBeforeMinutes: 40,
-    defaultBufferAfterMinutes: 40,
-    lastSyncedAt: new Date().toISOString(),
-  },
-];
+export const initialCalendarConnections: CalendarConnection[] = [];
 
 export const initialCalendarEvents: CalendarEvent[] = [
   {
@@ -164,6 +147,7 @@ export const initialCalendarEvents: CalendarEvent[] = [
     location: 'Sentrum',
     isWorkRelated: true,
     createsCarReservation: false,
+    isMock: true,
   },
   {
     id: 'cal_ev_2',
@@ -180,6 +164,7 @@ export const initialCalendarEvents: CalendarEvent[] = [
     vehicleReservationId: 'res_auto_1',
     bufferBeforeMinutes: 40,
     bufferAfterMinutes: 40,
+    isMock: true,
   },
 ];
 
@@ -199,6 +184,7 @@ export const initialReservations: CarReservation[] = [
     location: 'Lillesand',
     bufferBeforeMinutes: 40,
     bufferAfterMinutes: 40,
+    isMock: true,
     createdAt: new Date().toISOString(),
   },
 ];

@@ -40,6 +40,7 @@ import { buildCalendarDayItems } from '../utils/carCalendarDayItems';
 import { WeekTimeGrid } from './WeekTimeGrid';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
 import { SAMPLE_GOOGLE_CALENDARS } from '../utils/googleCalendarService';
+import { FAKE_SAMPLE_CALENDAR_IDS } from '../context/FamilyContext';
 import {
   buildCarReservationSpansByDay,
   FAMILY_CAR_LINE_COLOR,
@@ -90,10 +91,11 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     lastGoogleSyncTime,
     googleSyncStatusMessage,
     connectGoogleCalendar,
-    disconnectGoogleCalendar,
     availableGoogleCalendars,
     toggleCalendarViewVisibility,
     updateCalendarSettings,
+    removeCustomGoogleCalendar,
+    addCustomGoogleCalendar,
   } = useFamily();
 
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -103,6 +105,10 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
   const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
   const [selectedCalForModal, setSelectedCalForModal] = useState<GoogleCalendarItem | null>(null);
   const [showPastEvents, setShowPastEvents] = useState<boolean>(false);
+  const [showQuickAddCal, setShowQuickAddCal] = useState<boolean>(false);
+  const [quickCalInput, setQuickCalInput] = useState<string>('');
+  const [quickCalName, setQuickCalName] = useState<string>('');
+  const [isAddingCal, setIsAddingCal] = useState<boolean>(false);
 
   const applyCarException = async (ev: CalendarEvent, scope: 'one' | 'all') => {
     const calId = ev.googleCalendarId || ev.calendarId;
@@ -214,9 +220,15 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
   const allCalendars = useMemo(() => {
     const map = new Map<string, GoogleCalendarItem>();
 
+    const isCalendarMock = (c: GoogleCalendarItem) => {
+      if (c.isCustom) return false;
+      return Boolean(c.isMock) || FAKE_SAMPLE_CALENDAR_IDS.has(c.id) || c.id.startsWith('mock_') || c.id.startsWith('sample_');
+    };
+
     // 1. Saved calendars from settings
     (settings.savedCalendars || []).forEach((c) => {
       if (!deletedCalIds.has(c.id)) {
+        if (settings.disableMockData !== false && isCalendarMock(c)) return;
         map.set(c.id, { ...c });
       }
     });
@@ -224,12 +236,13 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
     // 2. Available Google calendars in state
     (availableGoogleCalendars || []).forEach((c) => {
       if (!deletedCalIds.has(c.id)) {
+        if (settings.disableMockData !== false && isCalendarMock(c)) return;
         const existing = map.get(c.id);
         map.set(c.id, { ...existing, ...c });
       }
     });
 
-    // 3. Fallback to sample calendars if empty and mock data is not disabled
+    // 3. Fallback to sample calendars ONLY if mock data is explicitly enabled AND user has no calendars
     if (map.size === 0 && settings.disableMockData === false) {
       SAMPLE_GOOGLE_CALENDARS.forEach((c) => {
         if (!deletedCalIds.has(c.id)) {
@@ -1124,8 +1137,84 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
                   })
                 ) : (
                   <div className="py-4 text-center text-xs text-slate-400">
-                    Ingen kalendere funnet.
+                    Ingen tilkoblede kalendere.
                   </div>
+                )}
+
+                {/* Hurtig-legg-til egen kalender (iCal eller Google Kalender-ID) */}
+                {showQuickAddCal ? (
+                  <div className="p-3.5 rounded-2xl bg-sky-50/80 border border-sky-200/90 space-y-2.5 mt-2 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-sky-950">Legg til egen kalender</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowQuickAddCal(false);
+                          setQuickCalInput('');
+                          setQuickCalName('');
+                        }}
+                        className="text-slate-400 hover:text-slate-600 text-xs font-bold px-1.5 py-0.5 rounded cursor-pointer"
+                      >
+                        Avbryt
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={quickCalInput}
+                      onChange={(e) => setQuickCalInput(e.target.value)}
+                      placeholder="Hemmelig iCal-adresse (.ics) eller Kalender-ID"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-medium focus:ring-2 focus:ring-sky-500"
+                    />
+
+                    <input
+                      type="text"
+                      value={quickCalName}
+                      onChange={(e) => setQuickCalName(e.target.value)}
+                      placeholder="Navn (f.eks. Jobbkalender, Marcus fotball)"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-medium focus:ring-2 focus:ring-sky-500"
+                    />
+
+                    <button
+                      type="button"
+                      disabled={isAddingCal || !quickCalInput.trim()}
+                      onClick={async () => {
+                        const trimmedId = quickCalInput.trim();
+                        const trimmedName = quickCalName.trim() || trimmedId;
+                        if (!trimmedId) return;
+                        setIsAddingCal(true);
+                        try {
+                          const res = await addCustomGoogleCalendar(trimmedId, trimmedName, '#0284c7');
+                          if (res.error) {
+                            setFeedbackToast(`⚠️ Lagret «${trimmedName}», men kunne ikke hente hendelser: ${res.error}`);
+                          } else if (res.importedCount > 0) {
+                            setFeedbackToast(`✅ «${trimmedName}» lagt til med ${res.importedCount} hendelser!`);
+                          } else {
+                            setFeedbackToast(`✅ Kalender «${trimmedName}» lagt til!`);
+                          }
+                          setTimeout(() => setFeedbackToast(null), 4000);
+                          setQuickCalInput('');
+                          setQuickCalName('');
+                          setShowQuickAddCal(false);
+                        } finally {
+                          setIsAddingCal(false);
+                        }
+                      }}
+                      className="w-full py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{isAddingCal ? 'Lagrer & henter...' : 'Lagre kalender'}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickAddCal(true)}
+                    className="w-full py-2.5 mt-2 rounded-2xl border-2 border-dashed border-slate-200/90 hover:border-sky-300 bg-white/40 hover:bg-white text-slate-600 hover:text-sky-700 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Legg til egen kalender (iCal / ID)</span>
+                  </button>
                 )}
               </div>
             </div>
@@ -1300,6 +1389,12 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
           members={members}
           vehicles={vehicles}
           onClose={() => setSelectedCalForModal(null)}
+          onDeleteRequest={async (cal) => {
+            await removeCustomGoogleCalendar(cal.id);
+            setSelectedCalForModal(null);
+            setFeedbackToast(`🗑️ Kalender «${cal.name}» ble fjernet`);
+            setTimeout(() => setFeedbackToast(null), 3500);
+          }}
           onSave={async (calId, updates) => {
             await updateCalendarSettings(calId, updates);
             setSelectedCalForModal(null);

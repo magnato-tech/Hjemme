@@ -220,7 +220,8 @@ const FamilyContext = createContext<FamilyContextType | undefined>(undefined);
 const STORAGE_KEY = 'familiekoordinator_state_v1';
 
 const DEMO_MEMBER_IDS = ['member_synelle', 'member_marcus'];
-const FAKE_SAMPLE_CALENDAR_IDS = new Set([
+export const FAKE_SAMPLE_CALENDAR_IDS = new Set([
+  'sample_cal_primary',
   'c_jobb_totland@group.calendar.google.com',
   'c_bil_familie@group.calendar.google.com',
   'c_familie_felles@group.calendar.google.com',
@@ -285,11 +286,14 @@ function computeBootState(): BootState {
   });
 
   settings.savedCalendars = (settings.savedCalendars || []).filter(
-    (cal) => !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)
+    (cal) => cal.isCustom || !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)
   );
   settings.carCalendarIds = (settings.carCalendarIds || []).filter(
     (id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id)
   );
+  if (settings.googleCalendarConfig && FAKE_SAMPLE_CALENDAR_IDS.has(settings.googleCalendarConfig.calendarId)) {
+    settings.googleCalendarConfig = undefined;
+  }
 
   const deletedMembers = new Set(settings.deletedMemberIds || []);
   const sourceMembers: FamilyMember[] = parsed?.members || (hasStoredData ? [] : productionMemberFallback());
@@ -343,13 +347,20 @@ function mergeCloudSettings(
   const deletedCal = new Set([...(prev.deletedCalendarIds || []), ...(migrated.deletedCalendarIds || [])]);
   const savedMap = new Map<string, GoogleCalendarItem>();
   [...(migrated.savedCalendars || []), ...(prev.savedCalendars || [])].forEach((cal) => {
-    if (FAKE_SAMPLE_CALENDAR_IDS.has(cal.id) || deletedCal.has(cal.id)) return;
+    if ((!cal.isCustom && FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)) || deletedCal.has(cal.id)) return;
     const existing = savedMap.get(cal.id);
     savedMap.set(cal.id, { ...existing, ...cal });
   });
   const carCalendarIds = Array.from(
     new Set([...(migrated.carCalendarIds || []), ...(prev.carCalendarIds || [])])
   ).filter((id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id) && !deletedCal.has(id));
+
+  const resolvedConfig =
+    migrated.googleCalendarConfig && !FAKE_SAMPLE_CALENDAR_IDS.has(migrated.googleCalendarConfig.calendarId)
+      ? migrated.googleCalendarConfig
+      : prev.googleCalendarConfig && !FAKE_SAMPLE_CALENDAR_IDS.has(prev.googleCalendarConfig.calendarId)
+      ? prev.googleCalendarConfig
+      : undefined;
 
   const next: FamilySettings = {
     ...prev,
@@ -359,12 +370,14 @@ function mergeCloudSettings(
     deletedCalendarIds: Array.from(deletedCal),
     savedCalendars: Array.from(savedMap.values()),
     carCalendarIds,
+    googleCalendarConfig: resolvedConfig,
   };
 
   const persist =
     migrated.disableMockData !== true ||
     JSON.stringify(migrated.savedCalendars || []) !== JSON.stringify(next.savedCalendars || []) ||
-    JSON.stringify([...(migrated.deletedMemberIds || [])].sort()) !== JSON.stringify([...deletedMemberIds].sort());
+    JSON.stringify([...(migrated.deletedMemberIds || [])].sort()) !== JSON.stringify([...deletedMemberIds].sort()) ||
+    JSON.stringify(migrated.googleCalendarConfig) !== JSON.stringify(next.googleCalendarConfig);
 
   return { next, persist };
 }
@@ -394,7 +407,7 @@ export const mergeCalendarsList = (
   // 2. Add current list (unless deleted)
   currentList.forEach((c) => {
     if (deletedSet.has(c.id)) return;
-    if (disableMockData !== false && FAKE_SAMPLE_CALENDAR_IDS.has(c.id)) return;
+    if (disableMockData !== false && !c.isCustom && FAKE_SAMPLE_CALENDAR_IDS.has(c.id)) return;
     map.set(c.id, { ...c });
   });
 
@@ -402,7 +415,7 @@ export const mergeCalendarsList = (
   if (savedList && savedList.length > 0) {
     savedList.forEach((c) => {
       if (deletedSet.has(c.id)) return;
-      if (disableMockData !== false && FAKE_SAMPLE_CALENDAR_IDS.has(c.id)) return;
+      if (disableMockData !== false && !c.isCustom && FAKE_SAMPLE_CALENDAR_IDS.has(c.id)) return;
       const existing = map.get(c.id);
       map.set(c.id, {
         ...existing,
@@ -412,30 +425,32 @@ export const mergeCalendarsList = (
     });
   }
 
-  // 4. Ensure active configured calendar exists in the list (unless deleted)
+  // 4. Ensure active configured calendar exists in the list (unless deleted or demo)
   if (activeConfig?.calendarId && !deletedSet.has(activeConfig.calendarId)) {
-    const existing = map.get(activeConfig.calendarId);
-    if (existing) {
-      if (activeConfig.calendarName) {
-        existing.customName = activeConfig.calendarName;
-        existing.summary = activeConfig.calendarName;
+    if (disableMockData === false || !FAKE_SAMPLE_CALENDAR_IDS.has(activeConfig.calendarId)) {
+      const existing = map.get(activeConfig.calendarId);
+      if (existing) {
+        if (activeConfig.calendarName) {
+          existing.customName = activeConfig.calendarName;
+          existing.summary = activeConfig.calendarName;
+        }
+      } else {
+        map.set(activeConfig.calendarId, {
+          id: activeConfig.calendarId,
+          summary:
+            activeConfig.calendarName ||
+            (activeConfig.calendarId === 'primary' ? 'Magnar Totland (Primær)' : activeConfig.calendarId),
+          customName: activeConfig.calendarName,
+          description: `Integrert kalender (${
+            activeConfig.calendarId.length > 25
+              ? activeConfig.calendarId.substring(0, 22) + '...'
+              : activeConfig.calendarId
+          })`,
+          backgroundColor: '#0284c7',
+          isCustom: activeConfig.calendarId !== 'primary',
+          enabledForDisplay: true,
+        });
       }
-    } else {
-      map.set(activeConfig.calendarId, {
-        id: activeConfig.calendarId,
-        summary:
-          activeConfig.calendarName ||
-          (activeConfig.calendarId === 'primary' ? 'Magnar Totland (Primær)' : activeConfig.calendarId),
-        customName: activeConfig.calendarName,
-        description: `Integrert kalender (${
-          activeConfig.calendarId.length > 25
-            ? activeConfig.calendarId.substring(0, 22) + '...'
-            : activeConfig.calendarId
-        })`,
-        backgroundColor: '#0284c7',
-        isCustom: activeConfig.calendarId !== 'primary',
-        enabledForDisplay: true,
-      });
     }
   }
 
@@ -1260,6 +1275,14 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
     }
 
+    // Clean from deletedCalendarIds and disabledCalendarIds so user can re-add or re-enable
+    const updatedDeleted = (settings.deletedCalendarIds || []).filter(
+      (dId) => dId !== cleanId && dId !== rawInput
+    );
+    const updatedDisabled = (settings.disabledCalendarIds || []).filter(
+      (dId) => dId !== cleanId && dId !== rawInput
+    );
+
     setAvailableGoogleCalendars((prev) => {
       const filtered = prev.filter((c) => c.id !== cleanId && c.id !== rawInput);
       return [...filtered, newCal];
@@ -1269,10 +1292,21 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const updatedSaved = [...saved.filter((c) => c.id !== cleanId && c.id !== rawInput), newCal];
     const newSettings: FamilySettings = {
       ...settings,
+      deletedCalendarIds: updatedDeleted,
+      disabledCalendarIds: updatedDisabled,
       savedCalendars: updatedSaved,
       calendarConfigs: currentConfigs,
     };
+    settingsRef.current = newSettings;
     setSettings(newSettings);
+
+    try {
+      const currentBlob = readStoredFamilyBlob() || {};
+      currentBlob.settings = newSettings;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentBlob));
+    } catch (e) {
+      console.error('Kunne ikke lagre til localStorage:', e);
+    }
 
     if (firebaseUser) {
       await saveSettingsToFirestore(newSettings).catch(console.error);
@@ -1329,7 +1363,16 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ? { ...settings.googleCalendarConfig, calendarName: trimmed }
           : settings.googleCalendarConfig,
     };
+    settingsRef.current = newSettings;
     setSettings(newSettings);
+
+    try {
+      const currentBlob = readStoredFamilyBlob() || {};
+      currentBlob.settings = newSettings;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentBlob));
+    } catch (e) {
+      console.error('Kunne ikke lagre til localStorage:', e);
+    }
 
     if (firebaseUser) {
       await saveSettingsToFirestore(newSettings).catch(console.error);
@@ -1760,7 +1803,16 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           ? { ...settings.googleCalendarConfig, calendarId: targetId }
           : settings.googleCalendarConfig,
     };
+    settingsRef.current = newSettings;
     setSettings(newSettings);
+
+    try {
+      const currentBlob = readStoredFamilyBlob() || {};
+      currentBlob.settings = newSettings;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentBlob));
+    } catch (e) {
+      console.error('Kunne ikke lagre til localStorage:', e);
+    }
 
     if (firebaseUser) {
       await saveSettingsToFirestore(newSettings).catch(console.error);
@@ -1787,14 +1839,10 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const privacyModes = { ...(settings.calendarPrivacyModes || {}) };
     delete privacyModes[id];
 
-    // 6. Update googleCalendarConfig if this was the primary selected calendar
+    // 6. Update googleCalendarConfig if this was the selected calendar
     let updatedConfig = settings.googleCalendarConfig;
     if (updatedConfig?.calendarId === id) {
-      updatedConfig = {
-        ...updatedConfig,
-        calendarId: 'primary',
-        calendarName: 'Magnar Totland (Primær)',
-      };
+      updatedConfig = undefined;
     }
 
     // 7. Remove local events and linked reservations for this deleted calendar
@@ -1915,7 +1963,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setReservations(cleanedReservations);
 
     const cleanedCalendars = availableGoogleCalendars
-      .filter((c) => !FAKE_SAMPLE_CALENDAR_IDS.has(c.id))
+      .filter((c) => c.isCustom || !FAKE_SAMPLE_CALENDAR_IDS.has(c.id))
       .map((c) => ({ ...c, enabledForDisplay: true }));
     setAvailableGoogleCalendars(cleanedCalendars);
 
@@ -1943,11 +1991,24 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       deletedMemberIds: Array.from(
         new Set([...(settings.deletedMemberIds || []), ...removedMembers.map((m) => m.id), ...DEMO_MEMBER_IDS])
       ),
-      savedCalendars: (settings.savedCalendars || []).filter((cal) => !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)),
+      savedCalendars: (settings.savedCalendars || []).filter((cal) => cal.isCustom || !FAKE_SAMPLE_CALENDAR_IDS.has(cal.id)),
       carCalendarIds: (settings.carCalendarIds || []).filter((id) => !FAKE_SAMPLE_CALENDAR_IDS.has(id)),
+      googleCalendarConfig: settings.googleCalendarConfig && !FAKE_SAMPLE_CALENDAR_IDS.has(settings.googleCalendarConfig.calendarId)
+        ? settings.googleCalendarConfig
+        : undefined,
     };
     settingsRef.current = newSettings;
     setSettings(newSettings);
+
+    try {
+      const currentBlob = readStoredFamilyBlob() || {};
+      currentBlob.settings = newSettings;
+      currentBlob.calendarEvents = cleanedEvents;
+      currentBlob.reservations = cleanedReservations;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentBlob));
+    } catch (e) {
+      console.error('Kunne ikke lagre til localStorage:', e);
+    }
 
     calendarEvents.filter(isMockEvent).forEach((event) => {
       deleteCalendarEventFromFirestore(event.id).catch(() => {});
@@ -2052,6 +2113,34 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Refresh list of calendars from this user's Google account
       const calendars = await fetchUserGoogleCalendars(token);
       setAvailableGoogleCalendars(calendars);
+
+      // Persist retrieved Google calendars into savedCalendars so they survive browser refreshes!
+      const currentSaved = settings.savedCalendars || [];
+      const savedMap = new Map<string, GoogleCalendarItem>();
+      currentSaved.forEach((c) => savedMap.set(c.id, c));
+      calendars.forEach((c) => {
+        const existing = savedMap.get(c.id);
+        savedMap.set(c.id, {
+          ...existing,
+          ...c,
+          customName: existing?.customName || c.customName || c.summary,
+        });
+      });
+      const updatedSavedCalendars = Array.from(savedMap.values());
+      const newSettings: FamilySettings = {
+        ...settings,
+        savedCalendars: updatedSavedCalendars,
+      };
+      settingsRef.current = newSettings;
+      setSettings(newSettings);
+
+      try {
+        const currentBlob = readStoredFamilyBlob() || {};
+        currentBlob.settings = newSettings;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentBlob));
+      } catch (e) {
+        console.error('Kunne ikke lagre til localStorage:', e);
+      }
 
       // Perform initial 2-way synchronization with all active calendars (including work calendar)
       const activeCalendars = calendars
