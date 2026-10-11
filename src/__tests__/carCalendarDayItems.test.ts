@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCalendarDayItems,
+  buildCarReservationCalendarEvents,
   filterReservationsForCalendarDay,
 } from '../utils/carCalendarDayItems';
 import { CalendarEvent, CarReservation } from '../types';
@@ -105,5 +106,23 @@ describe('carCalendarDayItems', () => {
 
     const items = buildCalendarDayItems([], [reservation], oct8);
     expect(items).toHaveLength(1);
+  });
+
+  it('buildCarReservationCalendarEvents utelater Google-avtaler som bare blokkerer bil', () => {
+    const googleJob = makeEvent({
+      id: 'gcal_1',
+      calendarId: 'primary',
+      googleEventId: 'abc',
+      createsCarReservation: true,
+      title: 'Møte',
+    });
+    const reservation = makeReservation({ id: 'res_manual' });
+
+    const onlyCar = buildCarReservationCalendarEvents([googleJob], [reservation], [
+      { id: 'veh_1', name: 'Familiebilen' },
+    ]);
+
+    expect(onlyCar.some((ev) => ev.id === 'gcal_1')).toBe(false);
+    expect(onlyCar.some((ev) => ev.vehicleReservationId === 'res_manual')).toBe(true);
   });
 });

@@ -4,6 +4,23 @@ export const WEEK_GRID_START_HOUR = 6;
 export const WEEK_GRID_END_HOUR = 23;
 export const WEEK_GRID_MIN_HOUR_PX = 52;
 export const WEEK_GRID_HOUR_COUNT = WEEK_GRID_END_HOUR - WEEK_GRID_START_HOUR + 1;
+/** Approx. header, filters, week bar and bottom nav (mobile calendar tab). */
+export const WEEK_GRID_MOBILE_CHROME_PX = 292;
+export const WEEK_GRID_MOBILE_MIN_HOUR_PX = 22;
+
+/** Hour row height so 06:00–23:00 fits in viewport on narrow screens. */
+export function computeWeekGridHourHeightPx(
+  viewportHeight: number,
+  viewportWidth: number,
+  hourCount: number = WEEK_GRID_HOUR_COUNT
+): number {
+  if (viewportWidth >= 640) {
+    return WEEK_GRID_MIN_HOUR_PX;
+  }
+  const available = Math.max(240, viewportHeight - WEEK_GRID_MOBILE_CHROME_PX);
+  const perHour = Math.floor(available / hourCount);
+  return Math.min(WEEK_GRID_MIN_HOUR_PX, Math.max(WEEK_GRID_MOBILE_MIN_HOUR_PX, perHour));
+}
 
 export interface GridStyle {
   top: string;

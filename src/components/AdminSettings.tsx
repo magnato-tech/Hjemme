@@ -1077,6 +1077,15 @@ export const AdminSettings: React.FC = () => {
       {/* TAB 5: KALENDER & REISETID (PRIORITET 9 & 10) */}
       {activeSubTab === 'calendar' && (
         <div className="space-y-6">
+          <div className="rounded-2xl border border-sky-200/80 bg-sky-50/70 px-4 py-3 text-xs text-sky-950 leading-relaxed">
+            <p className="font-semibold text-sky-900 mb-1">Slik kalenderen fungerer</p>
+            <p>
+              Avtaler og møter <strong>hentes fra Google Kalender</strong> (eller iCal-lenker du legger inn her).
+              Du oppretter ikke kalenderhendelser i appen. <strong>Bilreservasjoner</strong> lages i appen og
+              vises i kalendervisningen, men <strong>skrives ikke til Google</strong>.
+            </p>
+          </div>
+
           {/* GOOGLE KALENDER – SKRIVEBESKYTTET INTEGRASJON */}
           <div className="backdrop-blur-md bg-white/70 rounded-3xl p-6 border border-white/70 shadow-sm space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200/70">

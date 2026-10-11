@@ -342,11 +342,11 @@ export const CarModule: React.FC<CarModuleProps> = ({ onOpenReserveCar }) => {
             displayedReservations.map((res) => (
               <div key={res.id} className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-1">
-                  <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                    <span className="text-xs font-bold px-2.5 py-1 bg-white/80 border border-slate-200/60 text-slate-800 rounded-lg shadow-2xs">
+                  <div className="flex items-center gap-2 flex-nowrap min-w-0 overflow-x-auto">
+                    <span className="text-xs font-bold px-2.5 py-1 bg-white/80 border border-slate-200/60 text-slate-800 rounded-lg shadow-2xs shrink-0 whitespace-nowrap">
                       {formatNorwegianDate(res.startTime)}
                     </span>
-                    <span className="text-xs font-bold text-orange-900 bg-orange-50/80 px-2.5 py-1 rounded-lg border border-orange-200/60 shadow-2xs">
+                    <span className="text-xs font-bold text-orange-900 bg-orange-50/80 px-2.5 py-1 rounded-lg border border-orange-200/60 shadow-2xs shrink-0 whitespace-nowrap tabular-nums">
                       {formatTimeRange(res.startTime, res.endTime)}
                     </span>
                     <span className="text-xs font-semibold text-slate-900 flex items-center gap-1">

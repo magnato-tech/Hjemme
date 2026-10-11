@@ -36,7 +36,10 @@ import {
   isToday,
 } from '../utils/dateUtils';
 import { CalendarEvent, GoogleCalendarItem } from '../types';
-import { buildCalendarDayItems } from '../utils/carCalendarDayItems';
+import {
+  buildCalendarDayItems,
+  buildCarReservationCalendarEvents,
+} from '../utils/carCalendarDayItems';
 import { WeekTimeGrid } from './WeekTimeGrid';
 import { CalendarSettingsModal } from './Modals/CalendarSettingsModal';
 import { SAMPLE_GOOGLE_CALENDARS } from '../utils/googleCalendarService';
@@ -294,6 +297,22 @@ export const CalendarModule: React.FC = () => {
 
   const onlyCarReservations = settings.calendarShowOnlyCarReservations === true;
 
+  const eventsSource = useMemo(() => {
+    if (!onlyCarReservations) return calendarEvents;
+    return buildCarReservationCalendarEvents(
+      calendarEvents,
+      reservations,
+      vehicles,
+      selectedMemberFilter
+    );
+  }, [
+    calendarEvents,
+    reservations,
+    vehicles,
+    onlyCarReservations,
+    selectedMemberFilter,
+  ]);
+
   const eventReservesCar = (ev: CalendarEvent): boolean => {
     if (ev.createsCarReservation) return true;
     return reservations.some(
@@ -301,7 +320,7 @@ export const CalendarModule: React.FC = () => {
     );
   };
 
-  const filteredEvents = calendarEvents.filter((ev) => {
+  const filteredEvents = eventsSource.filter((ev) => {
     if (
       settings.disableMockData &&
       (ev.id === 'cal_ev_1' || ev.id === 'cal_ev_2' || ev.id.startsWith('mock_') || (ev as any).isMock)
@@ -322,10 +341,7 @@ export const CalendarModule: React.FC = () => {
     if (ev.id === 'cal_ev_2' && disabledCalIds.has('c_jobb_totland@group.calendar.google.com')) {
       return false;
     }
-    if (selectedMemberFilter !== 'all' && ev.memberId !== selectedMemberFilter) {
-      return false;
-    }
-    if (onlyCarReservations && !eventReservesCar(ev)) {
+    if (!onlyCarReservations && selectedMemberFilter !== 'all' && ev.memberId !== selectedMemberFilter) {
       return false;
     }
     return true;
@@ -337,21 +353,30 @@ export const CalendarModule: React.FC = () => {
 
   const showFamilyCarLine = settings.showFamilyCarLine !== false;
 
-  const carSpanSourceEvents = useMemo(
+  const carSpanSourceEvents = useMemo(() => {
+    if (onlyCarReservations) return [];
+    return calendarEvents.filter((ev) => {
+      if (
+        settings.disableMockData &&
+        (ev.id === 'cal_ev_1' ||
+          ev.id === 'cal_ev_2' ||
+          ev.id.startsWith('mock_') ||
+          (ev as { isMock?: boolean }).isMock)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [calendarEvents, settings.disableMockData, onlyCarReservations]);
+
+  const reservationsForCarLine = useMemo(
     () =>
-      calendarEvents.filter((ev) => {
-        if (
-          settings.disableMockData &&
-          (ev.id === 'cal_ev_1' ||
-            ev.id === 'cal_ev_2' ||
-            ev.id.startsWith('mock_') ||
-            (ev as { isMock?: boolean }).isMock)
-        ) {
-          return false;
-        }
+      reservations.filter((res) => {
+        if (res.status === 'cancelled') return false;
+        if (selectedMemberFilter !== 'all' && res.memberId !== selectedMemberFilter) return false;
         return true;
       }),
-    [calendarEvents, settings.disableMockData]
+    [reservations, selectedMemberFilter]
   );
 
   const weekStart = useMemo(() => getWeekStart(currentDate), [currentDate]);
@@ -365,14 +390,14 @@ export const CalendarModule: React.FC = () => {
         allCalendars,
         weekDates,
         (calId) => isCalendarActiveForCarCheck(calId),
-        reservations
+        reservationsForCarLine
       ),
     [
       carSpanSourceEvents,
       settings,
       allCalendars,
       weekDates,
-      reservations,
+      reservationsForCarLine,
       disabledCalIds,
       settings.calendarViewHiddenIds,
     ]
@@ -387,7 +412,7 @@ export const CalendarModule: React.FC = () => {
             allCalendars,
             calendarCells.map((cell) => cell.date),
             (calId) => isCalendarActiveForCarCheck(calId),
-            reservations
+            reservationsForCarLine
           )
         : new Set<string>(),
     [
@@ -396,7 +421,7 @@ export const CalendarModule: React.FC = () => {
       settings,
       allCalendars,
       calendarCells,
-      reservations,
+      reservationsForCarLine,
       disabledCalIds,
       settings.calendarViewHiddenIds,
     ]
@@ -412,11 +437,11 @@ export const CalendarModule: React.FC = () => {
     () =>
       buildCalendarDayItems(
         sortedEvents,
-        reservations,
+        onlyCarReservations ? [] : reservations,
         selectedDate,
-        selectedMemberFilter
+        onlyCarReservations ? 'all' : selectedMemberFilter
       ),
-    [sortedEvents, reservations, selectedDate, selectedMemberFilter]
+    [sortedEvents, reservations, selectedDate, selectedMemberFilter, onlyCarReservations]
   );
 
   const getEventCalendarColor = (event: CalendarEvent): string => {
@@ -440,7 +465,7 @@ export const CalendarModule: React.FC = () => {
     <div
       className={
         viewMode === 'week'
-          ? 'flex flex-col gap-3 h-full min-h-0 overflow-hidden'
+          ? 'flex flex-col gap-2 sm:gap-3 h-full min-h-0 overflow-hidden'
           : 'h-full min-h-0 overflow-y-auto space-y-6 pb-8'
       }
     >
@@ -452,49 +477,9 @@ export const CalendarModule: React.FC = () => {
         </div>
       )}
 
-      {/* Header */}
-      <div
-        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 backdrop-blur-md bg-white/60 rounded-3xl border border-white/60 shadow-sm shrink-0 ${
-          viewMode === 'week' ? 'p-3 sm:p-4' : 'p-6 sm:p-7'
-        }`}
-      >
-        <div className="flex items-center space-x-4">
-          <div className="w-13 h-13 bg-sky-100/80 text-sky-800 rounded-2xl flex items-center justify-center border border-sky-200/60 shadow-2xs">
-            <Calendar className="w-7 h-7" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-                Familiekalender
-              </h1>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                Google Kalender
-              </span>
-            </div>
-            <p className="text-xs sm:text-sm text-slate-500">
-              Avtaler hentes fra Google Kalender. Bilreservasjoner opprettes kun i appen.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <button
-            onClick={handleTriggerSync}
-            disabled={isTwoWaySyncing}
-            className="flex items-center space-x-2 bg-white/80 hover:bg-white text-slate-800 px-4 py-2.5 rounded-2xl text-sm font-bold shadow-2xs border border-white/80 transition-all cursor-pointer disabled:opacity-50"
-            title="Hent oppdaterte avtaler fra Google Kalender"
-          >
-            <RotateCw className={`w-4 h-4 text-blue-600 ${isTwoWaySyncing ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">
-              {isTwoWaySyncing ? 'Synker...' : 'Synk Google nå'}
-            </span>
-          </button>
-        </div>
-      </div>
-
       {/* View Switcher & Member Filters */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2">
         {/* View Mode buttons */}
         <div className="flex items-center p-1 bg-white/60 backdrop-blur-md rounded-2xl border border-white/60 shadow-2xs w-fit">
           <button
@@ -526,6 +511,17 @@ export const CalendarModule: React.FC = () => {
             }`}
           >
             Tidslinje / Liste
+          </button>
+        </div>
+          <button
+            type="button"
+            onClick={handleTriggerSync}
+            disabled={isTwoWaySyncing}
+            className="p-2 rounded-xl bg-white/60 border border-white/60 text-slate-700 hover:bg-white shadow-2xs disabled:opacity-50 cursor-pointer shrink-0"
+            title="Synk fra Google Kalender (full info under Innstillinger → Kalender)"
+            aria-label="Synk Google Kalender"
+          >
+            <RotateCw className={`w-4 h-4 text-blue-600 ${isTwoWaySyncing ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
@@ -1272,11 +1268,11 @@ export const CalendarModule: React.FC = () => {
                   className="py-4 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 >
                   <div className="space-y-1.5">
-                    <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                      <span className="text-xs font-bold px-2.5 py-1 bg-white/80 border border-slate-200/60 text-slate-800 rounded-lg shadow-2xs">
+                    <div className="flex items-center gap-2 flex-nowrap min-w-0 overflow-x-auto">
+                      <span className="text-xs font-bold px-2.5 py-1 bg-white/80 border border-slate-200/60 text-slate-800 rounded-lg shadow-2xs shrink-0 whitespace-nowrap">
                         {formatNorwegianDate(ev.startTime)}
                       </span>
-                      <span className="text-xs font-bold text-sky-950 bg-sky-50/80 px-2.5 py-1 rounded-lg border border-sky-200/60 shadow-2xs">
+                      <span className="text-xs font-bold text-sky-950 bg-sky-50/80 px-2.5 py-1 rounded-lg border border-sky-200/60 shadow-2xs shrink-0 whitespace-nowrap tabular-nums">
                         {formatTimeRange(ev.startTime, ev.endTime)}
                       </span>
                       <span className="text-xs font-semibold text-slate-900">{ev.memberName}</span>

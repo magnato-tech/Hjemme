@@ -1,5 +1,3 @@
-import fallbackConfig from '../../firebase-applet-config.json';
-
 export interface FirebaseAppletConfig {
   apiKey: string;
   authDomain: string;
@@ -11,7 +9,13 @@ export interface FirebaseAppletConfig {
   oAuthClientId: string;
 }
 
-const rawFallback: Partial<FirebaseAppletConfig> = fallbackConfig || {};
+/** Optional gitignored file in project root; empty when missing so dev works with `.env` only. */
+const appletConfigModules = import.meta.glob<Partial<FirebaseAppletConfig>>(
+  '../../firebase-applet-config.json',
+  { eager: true, import: 'default' }
+);
+const rawFallback: Partial<FirebaseAppletConfig> =
+  Object.values(appletConfigModules)[0] ?? {};
 
 function envOrFallback(key: string, fallbackKey: keyof FirebaseAppletConfig, defaultVal = ''): string {
   const envVal = import.meta.env[key];
@@ -45,5 +49,3 @@ export const isFirebaseConfigured = Boolean(
   firebaseConfig.projectId &&
   firebaseConfig.appId
 );
-
-

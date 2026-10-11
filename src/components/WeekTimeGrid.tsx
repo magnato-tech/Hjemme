@@ -9,6 +9,7 @@ import {
   isAllDayEvent,
   layoutTimedEvents,
   timeRangeToGridStyle,
+  computeWeekGridHourHeightPx,
   WEEK_GRID_END_HOUR,
   WEEK_GRID_HOUR_COUNT,
   WEEK_GRID_MIN_HOUR_PX,
@@ -40,7 +41,6 @@ const HOURS = Array.from(
   (_, i) => WEEK_GRID_START_HOUR + i
 );
 
-const MIN_GRID_HEIGHT = WEEK_GRID_HOUR_COUNT * WEEK_GRID_MIN_HOUR_PX;
 /** Shared column template: mandag–søndag på én rad også på smal mobil. */
 const WEEK_GRID_COLS =
   'grid grid-cols-[2.25rem_repeat(7,minmax(0,1fr))] sm:grid-cols-[3rem_repeat(7,minmax(0,1fr))] w-full min-w-0';
@@ -57,11 +57,30 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
   showFamilyCarLine = false,
 }) => {
   const [now, setNow] = useState(() => new Date());
+  const [hourRowPx, setHourRowPx] = useState(WEEK_GRID_MIN_HOUR_PX);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const updateHourRowHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      setHourRowPx(computeWeekGridHourHeightPx(height, window.innerWidth));
+    };
+    updateHourRowHeight();
+    window.addEventListener('resize', updateHourRowHeight);
+    window.visualViewport?.addEventListener('resize', updateHourRowHeight);
+    return () => {
+      window.removeEventListener('resize', updateHourRowHeight);
+      window.visualViewport?.removeEventListener('resize', updateHourRowHeight);
+    };
+  }, []);
+
+  const fitsViewport = hourRowPx < WEEK_GRID_MIN_HOUR_PX;
+  const topOffsetPx = hourRowPx / 2;
+  const gridHeightPx = WEEK_GRID_HOUR_COUNT * hourRowPx;
 
   const weekStart = useMemo(() => getWeekStart(weekAnchor), [weekAnchor]);
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
@@ -92,7 +111,7 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
 
   return (
     <div className="flex-1 min-h-0 flex flex-col backdrop-blur-md bg-white/70 rounded-3xl border border-white/80 shadow-sm overflow-hidden">
-      <div className="shrink-0 flex items-center justify-between gap-3 px-3 sm:px-4 py-2.5 border-b border-slate-200/60">
+      <div className="shrink-0 flex items-center justify-between gap-2 px-2 sm:px-4 py-1.5 sm:py-2.5 border-b border-slate-200/60">
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -110,11 +129,11 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
           >
             <ChevronRight className="w-4 h-4" />
           </button>
-          <div>
-            <h2 className="text-sm sm:text-base font-bold text-slate-900">
+          <div className="flex items-baseline gap-1.5 min-w-0 flex-nowrap">
+            <h2 className="text-sm sm:text-base font-bold text-slate-900 shrink-0">
               Uke {getWeekNumber(weekStart)}
             </h2>
-            <p className="text-[11px] text-slate-500">{weekLabel}</p>
+            <span className="text-[10px] sm:text-[11px] text-slate-500 truncate">{weekLabel}</span>
           </div>
         </div>
         <button
@@ -126,7 +145,11 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
+      <div
+        className={`flex-1 min-h-0 overflow-x-hidden ${
+          fitsViewport ? 'overflow-y-hidden' : 'overflow-y-auto'
+        }`}
+      >
         <div className="w-full min-w-0">
           <div className="sticky top-0 z-30 border-b border-slate-200/60 bg-white/95 backdrop-blur-sm">
             <div className={`${WEEK_GRID_COLS} border-b border-slate-200/60`}>
@@ -136,19 +159,21 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
                 return (
                   <div
                     key={idx}
-                    className={`py-2 text-center border-r border-slate-200/50 last:border-r-0 ${
+                    className={`py-1 sm:py-2 text-center border-r border-slate-200/50 last:border-r-0 ${
                       today ? 'bg-sky-50/80' : ''
                     }`}
                   >
-                    <div className="text-[9px] sm:text-[10px] font-semibold text-slate-500 uppercase tracking-wide leading-none">
-                      {dayNamesShort[idx]}
-                    </div>
-                    <div
-                      className={`mt-0.5 inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm font-bold rounded-full ${
-                        today ? 'bg-sky-600 text-white' : 'text-slate-800'
-                      }`}
-                    >
-                      {date.getDate()}
+                    <div className="flex items-center justify-center gap-0.5 sm:gap-1 leading-none whitespace-nowrap">
+                      <span className="text-[9px] sm:text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                        {dayNamesShort[idx]}
+                      </span>
+                      <span
+                        className={`inline-flex items-center justify-center min-w-[1.25rem] h-5 sm:min-w-[1.5rem] sm:h-6 px-0.5 text-[11px] sm:text-sm font-bold rounded-full ${
+                          today ? 'bg-sky-600 text-white' : 'text-slate-800'
+                        }`}
+                      >
+                        {date.getDate()}
+                      </span>
                     </div>
                   </div>
                 );
@@ -192,17 +217,21 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
           <div
             className={`relative ${WEEK_GRID_COLS}`}
             style={{
-              minHeight: MIN_GRID_HEIGHT,
-              gridTemplateRows: `repeat(${WEEK_GRID_HOUR_COUNT}, minmax(${WEEK_GRID_MIN_HOUR_PX}px, 1fr))`,
+              paddingTop: topOffsetPx,
+              height: gridHeightPx + topOffsetPx,
+              minHeight: gridHeightPx + topOffsetPx,
+              gridTemplateRows: `repeat(${WEEK_GRID_HOUR_COUNT}, ${hourRowPx}px)`,
             }}
           >
           {HOURS.map((hour, rowIdx) => (
             <div
               key={`time-${hour}`}
-              className="relative border-r border-slate-200/50 border-t border-slate-200/40 text-[10px] text-slate-400 font-medium text-right pr-1.5 -mt-2.5"
+              className="relative border-r border-slate-200/50 text-[9px] sm:text-[10px] text-slate-400 font-medium text-right pr-0.5 sm:pr-1.5 whitespace-nowrap tabular-nums leading-none"
               style={{ gridColumn: 1, gridRow: rowIdx + 1 }}
             >
-              {hour.toString().padStart(2, '0')}:00
+              <span className="absolute right-0.5 sm:right-1.5 top-0 -translate-y-1/2">
+                {hour.toString().padStart(2, '0')}:00
+              </span>
             </div>
           ))}
 
@@ -279,7 +308,7 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
                         height: style.height,
                         left: `calc(${leftPercent}% + ${eventInset}px)`,
                         width: `calc(${widthPercent}% - ${eventInset}px)`,
-                        minHeight: '22px',
+                        minHeight: fitsViewport ? '14px' : '22px',
                       }}
                     >
                       <div
@@ -290,17 +319,17 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
                         }}
                         title={`${title} (${formatTime(event.startTime)} – ${formatTime(event.endTime)})`}
                       >
-                        <div className="flex items-start gap-0.5 min-w-0">
+                        <div className="flex items-center gap-0.5 min-w-0 whitespace-nowrap overflow-hidden leading-tight">
                           {event.isConfidential && (
-                            <Lock className="w-2.5 h-2.5 text-amber-700 shrink-0 mt-0.5" />
+                            <Lock className="w-2.5 h-2.5 text-amber-700 shrink-0" />
                           )}
-                          <span className="text-[11px] font-semibold text-slate-900 leading-tight truncate block">
+                          <span className="text-[9px] sm:text-[10px] text-slate-600 shrink-0 tabular-nums">
+                            {formatTime(event.startTime)}
+                          </span>
+                          <span className="text-[10px] sm:text-[11px] font-semibold text-slate-900 truncate min-w-0">
                             {title}
                           </span>
                         </div>
-                        <span className="text-[10px] text-slate-600 leading-none block truncate">
-                          {formatTime(event.startTime)}
-                        </span>
                       </div>
                     </div>
                   );

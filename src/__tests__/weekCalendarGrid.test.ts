@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildMonthCalendarCells,
+  computeWeekGridHourHeightPx,
   getWeekDates,
   getWeekStart,
   layoutTimedEvents,
   timeRangeToGridStyle,
+  WEEK_GRID_MIN_HOUR_PX,
+  WEEK_GRID_MOBILE_MIN_HOUR_PX,
 } from '../utils/weekCalendarGrid';
 import { makeTimedEvent } from './fixtures/calendarFixtures';
 
@@ -33,6 +36,15 @@ describe('weekCalendarGrid', () => {
     const style = timeRangeToGridStyle('2026-09-25T05:00:00', '2026-09-25T23:00:00');
     expect(style.top).toBe('0%');
     expect(parseFloat(style.height)).toBeGreaterThan(90);
+  });
+
+  it('computeWeekGridHourHeightPx krymper rader på mobil', () => {
+    const mobile = computeWeekGridHourHeightPx(700, 390);
+    expect(mobile).toBeLessThan(WEEK_GRID_MIN_HOUR_PX);
+    expect(mobile).toBeGreaterThanOrEqual(WEEK_GRID_MOBILE_MIN_HOUR_PX);
+
+    const desktop = computeWeekGridHourHeightPx(900, 1024);
+    expect(desktop).toBe(WEEK_GRID_MIN_HOUR_PX);
   });
 
   it('layoutTimedEvents plasserer overlappende hendelser side om side', () => {

@@ -1,5 +1,55 @@
-import { CalendarEvent, CarReservation } from '../types';
+import { CalendarEvent, CarReservation, Vehicle } from '../types';
 import { isSameDay, overlapsCalendarDay } from './dateUtils';
+
+/** Hendelse opprettet i appen for en bilreservasjon — ikke en Google/iCal-avtale. */
+export function isExplicitCarReservationEvent(event: CalendarEvent): boolean {
+  return event.calendarId === 'car_reservations' || event.id.startsWith('cal_res_');
+}
+
+/** Kalenderhendelser som kun representerer bilreservasjoner (inkl. syntetiske fra reservasjonsliste). */
+export function buildCarReservationCalendarEvents(
+  calendarEvents: CalendarEvent[],
+  reservations: CarReservation[],
+  vehicles: Pick<Vehicle, 'id' | 'name'>[],
+  memberFilter = 'all'
+): CalendarEvent[] {
+  const list = calendarEvents.filter(isExplicitCarReservationEvent);
+  const existingIds = new Set(list.map((e) => e.id));
+  const existingResIds = new Set(
+    list.map((e) => e.vehicleReservationId).filter((id): id is string => Boolean(id))
+  );
+
+  for (const res of reservations) {
+    if (res.status === 'cancelled') continue;
+    if (memberFilter !== 'all' && res.memberId !== memberFilter) continue;
+
+    const calId = res.calendarEventId || `cal_res_${res.id}`;
+    if (existingIds.has(calId) || existingResIds.has(res.id)) continue;
+
+    const vehicle = vehicles.find((v) => v.id === res.vehicleId);
+    list.push({
+      id: calId,
+      memberId: res.memberId,
+      memberName: res.memberName,
+      calendarId: 'car_reservations',
+      title: res.purpose
+        ? `🚗 Bil: ${res.purpose}`
+        : `🚗 Bilreservasjon (${vehicle?.name || 'Familiebil'})`,
+      startTime: res.startTime,
+      endTime: res.endTime,
+      location: res.location,
+      description: res.notes,
+      isWorkRelated: res.isWorkRelated || false,
+      createsCarReservation: true,
+      vehicleReservationId: res.id,
+      isConfidential: res.isConfidential || false,
+    });
+    existingIds.add(calId);
+    existingResIds.add(res.id);
+  }
+
+  return list;
+}
 
 export type CalendarDayItem =
   | { kind: 'event'; event: CalendarEvent }
