@@ -25,14 +25,12 @@ interface DashboardTodayProps {
   setActiveTab: (tab: ActiveTab) => void;
   onOpenReserveCar: () => void;
   onOpenCreateTask: () => void;
-  onOpenAddCalendarEvent: () => void;
 }
 
 export const DashboardToday: React.FC<DashboardTodayProps> = ({
   setActiveTab,
   onOpenReserveCar,
   onOpenCreateTask,
-  onOpenAddCalendarEvent,
 }) => {
   const {
     activeMember,
@@ -319,13 +317,6 @@ export const DashboardToday: React.FC<DashboardTodayProps> = ({
               </div>
 
               <div className="flex items-center space-x-2">
-                <button
-                  onClick={onOpenAddCalendarEvent}
-                  className="px-3 py-1.5 text-xs font-semibold bg-white/80 hover:bg-white text-sky-900 rounded-xl border border-sky-200/80 transition-all flex items-center gap-1 shadow-2xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Legg til</span>
-                </button>
                 <button
                   onClick={() => setActiveTab('calendar')}
                   className="text-xs font-semibold text-sky-700 hover:text-sky-800 flex items-center gap-1 group bg-sky-50/80 hover:bg-sky-100/80 px-3 py-1.5 rounded-xl border border-sky-200/50 transition-colors"

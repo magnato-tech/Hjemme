@@ -1,7 +1,7 @@
 import { CalendarEvent } from '../types';
 
 export const WEEK_GRID_START_HOUR = 6;
-export const WEEK_GRID_END_HOUR = 22;
+export const WEEK_GRID_END_HOUR = 23;
 export const WEEK_GRID_MIN_HOUR_PX = 52;
 export const WEEK_GRID_HOUR_COUNT = WEEK_GRID_END_HOUR - WEEK_GRID_START_HOUR + 1;
 
@@ -30,7 +30,7 @@ function clampMinutes(
   };
 }
 
-/** Plasserer et tidsrom i uke-timegridet (prosent innenfor 06:00–22:00). */
+/** Plasserer et tidsrom i uke-timegridet (prosent innenfor 06:00–23:00). */
 export function timeRangeToGridStyle(
   startIso: string,
   endIso: string,
@@ -163,7 +163,7 @@ export function buildMonthCalendarCells(year: number, month: number): MonthCalen
   return cells;
 }
 
-/** Brøkdel av grid-høyde (0–1) for «nå»-linje; null utenfor 06:00–22:00. */
+/** Brøkdel av grid-høyde (0–1) for «nå»-linje; null utenfor 06:00–23:00. */
 export function getNowLineFraction(
   now = new Date(),
   gridStartHour = WEEK_GRID_START_HOUR,

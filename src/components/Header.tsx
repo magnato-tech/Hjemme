@@ -42,6 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
     isFirestoreSyncing,
     signInWithFirebaseGoogle,
     signOutFirebaseUser,
+    settings,
   } = useFamily();
 
   const completedPoints = getMemberCompletedPoints(activeMember.id);
@@ -89,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
                 <div>
                   <span className="font-bold text-slate-900 text-base sm:text-lg tracking-tight block leading-tight">
-                    Familiekoordinator
+                    {settings.familyName || 'Hjemme'}
                   </span>
                   <span className="text-xs text-slate-500 font-medium hidden sm:inline">
                     Uke {currentWeek} • Minst mulig administrasjon

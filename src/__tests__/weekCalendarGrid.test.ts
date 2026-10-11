@@ -29,7 +29,7 @@ describe('weekCalendarGrid', () => {
     expect(cells.filter((c) => c.isCurrentMonth).length).toBe(30); // september 2026
   });
 
-  it('timeRangeToGridStyle klipper til 06-22', () => {
+  it('timeRangeToGridStyle klipper til 06-23', () => {
     const style = timeRangeToGridStyle('2026-09-25T05:00:00', '2026-09-25T23:00:00');
     expect(style.top).toBe('0%');
     expect(parseFloat(style.height)).toBeGreaterThan(90);

@@ -66,13 +66,9 @@ import {
   hasSingleException,
 } from '../utils/carOverrideUtils';
 
-interface CalendarModuleProps {
-  onOpenAddEvent?: () => void;
-}
-
 type ViewMode = 'month' | 'week' | 'agenda';
 
-export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }) => {
+export const CalendarModule: React.FC = () => {
   const {
     calendarConnections,
     calendarEvents,
@@ -473,11 +469,11 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
               </h1>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
-                2-veis Google Sync
+                Google Kalender
               </span>
             </div>
             <p className="text-xs sm:text-sm text-slate-500">
-              Synkroniserer begge veier med Google Kalender & reserverer bil automatisk
+              Avtaler hentes fra Google Kalender. Bilreservasjoner opprettes kun i appen.
             </p>
           </div>
         </div>
@@ -487,20 +483,12 @@ export const CalendarModule: React.FC<CalendarModuleProps> = ({ onOpenAddEvent }
             onClick={handleTriggerSync}
             disabled={isTwoWaySyncing}
             className="flex items-center space-x-2 bg-white/80 hover:bg-white text-slate-800 px-4 py-2.5 rounded-2xl text-sm font-bold shadow-2xs border border-white/80 transition-all cursor-pointer disabled:opacity-50"
-            title="Synkroniser begge veier med Google Kalender nå"
+            title="Hent oppdaterte avtaler fra Google Kalender"
           >
             <RotateCw className={`w-4 h-4 text-blue-600 ${isTwoWaySyncing ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">
               {isTwoWaySyncing ? 'Synker...' : 'Synk Google nå'}
             </span>
-          </button>
-
-          <button
-            onClick={onOpenAddEvent}
-            className="flex items-center justify-center space-x-2 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white px-5 py-2.5 rounded-2xl text-sm font-semibold shadow-sm transition-all border border-sky-400/30 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Ny hendelse</span>
           </button>
         </div>
       </div>

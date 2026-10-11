@@ -9,13 +9,10 @@ import { WeekOverview } from './components/WeekOverview';
 import { AdminSettings } from './components/AdminSettings';
 import { ReserveCarModal } from './components/Modals/ReserveCarModal';
 import { CreateTaskModal } from './components/Modals/CreateTaskModal';
-import { AddCalendarEventModal } from './components/Modals/AddCalendarEventModal';
-
 function MainApp() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [isReserveCarOpen, setIsReserveCarOpen] = useState(false);
   const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
-  const [isAddCalendarEventOpen, setIsAddCalendarEventOpen] = useState(false);
 
   return (
     <div
@@ -48,7 +45,6 @@ function MainApp() {
             setActiveTab={setActiveTab}
             onOpenReserveCar={() => setIsReserveCarOpen(true)}
             onOpenCreateTask={() => setIsCreateTaskOpen(true)}
-            onOpenAddCalendarEvent={() => setIsAddCalendarEventOpen(true)}
           />
         )}
 
@@ -62,7 +58,7 @@ function MainApp() {
 
         {activeTab === 'calendar' && (
           <div className="flex-1 min-h-0">
-            <CalendarModule onOpenAddEvent={() => setIsAddCalendarEventOpen(true)} />
+            <CalendarModule />
           </div>
         )}
 
@@ -82,10 +78,6 @@ function MainApp() {
         onClose={() => setIsCreateTaskOpen(false)}
       />
 
-      <AddCalendarEventModal
-        isOpen={isAddCalendarEventOpen}
-        onClose={() => setIsAddCalendarEventOpen(false)}
-      />
     </div>
   );
 }

@@ -33,7 +33,7 @@ export function icalProxyMiddleware(): Connect.NextHandleFunction {
 
     loader(normalized, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'Familiekoordinator/1.0' },
+      headers: { 'User-Agent': 'HjemmeApp/1.0' },
     })
       .then(async (response) => {
         if (!isAllowedIcalUrl(response.url)) {

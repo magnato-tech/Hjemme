@@ -41,9 +41,9 @@ const HOURS = Array.from(
 );
 
 const MIN_GRID_HEIGHT = WEEK_GRID_HOUR_COUNT * WEEK_GRID_MIN_HOUR_PX;
-/** Shared column template so header and body stay pixel-aligned (incl. with scrollbar). */
+/** Shared column template: mandag–søndag på én rad også på smal mobil. */
 const WEEK_GRID_COLS =
-  'grid grid-cols-[3rem_repeat(7,minmax(0,1fr))] min-w-[640px] w-full';
+  'grid grid-cols-[2.25rem_repeat(7,minmax(0,1fr))] sm:grid-cols-[3rem_repeat(7,minmax(0,1fr))] w-full min-w-0';
 
 export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
   events,
@@ -126,8 +126,8 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto">
-        <div className="min-w-[640px]">
+      <div className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto">
+        <div className="w-full min-w-0">
           <div className="sticky top-0 z-30 border-b border-slate-200/60 bg-white/95 backdrop-blur-sm">
             <div className={`${WEEK_GRID_COLS} border-b border-slate-200/60`}>
               <div className="border-r border-slate-200/50" />
@@ -140,11 +140,11 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
                       today ? 'bg-sky-50/80' : ''
                     }`}
                   >
-                    <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                    <div className="text-[9px] sm:text-[10px] font-semibold text-slate-500 uppercase tracking-wide leading-none">
                       {dayNamesShort[idx]}
                     </div>
                     <div
-                      className={`mt-0.5 inline-flex items-center justify-center w-7 h-7 text-sm font-bold rounded-full ${
+                      className={`mt-0.5 inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm font-bold rounded-full ${
                         today ? 'bg-sky-600 text-white' : 'text-slate-800'
                       }`}
                     >

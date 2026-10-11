@@ -79,8 +79,6 @@ import {
 import { migrateTaskTemplates } from '../utils/taskMigration';
 import {
   requestGoogleAccessToken,
-  createGoogleCalendarEvent,
-  deleteGoogleCalendarEvent,
   executeTwoWayCalendarSync,
   executeMultiCalendarSync,
   fetchUserGoogleCalendars,
@@ -131,9 +129,6 @@ interface FamilyContextType {
   // Calendar & Rules
   calendarConnections: CalendarConnection[];
   calendarEvents: CalendarEvent[];
-  addCalendarEvent: (
-    event: Omit<CalendarEvent, 'id'>
-  ) => Promise<{ event: CalendarEvent; reservation?: CarReservation }>;
   deleteCalendarEvent: (id: string) => Promise<void>;
   syncCalendar: (connectionId: string) => Promise<SyncResult | null>;
   syncTwoWayWithGoogle: (targetMemberId?: string) => Promise<SyncResult | null>;
@@ -1124,8 +1119,7 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setReservations((prev) => [newReservation, ...prev]);
 
-    // If this reservation was not created by addCalendarEvent, automatically create a linked CalendarEvent
-    // so it shows up in the calendar immediately!
+    // Vis bilreservasjon i kalenderen (kun i appen – ikke i Google Kalender).
     if (!reservationData.calendarEventId) {
       const targetVehicle = vehicles.find((v) => v.id === reservationData.vehicleId) || activeVehicle;
       const calEvent: CalendarEvent = {
@@ -1176,67 +1170,6 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } else {
       deleteCalendarEventFromFirestore(`cal_res_${id}`).catch(console.error);
     }
-  };
-
-  // Calendar Events & Auto Car Reservations
-  const addCalendarEvent = async (eventData: Omit<CalendarEvent, 'id'>) => {
-    const eventId = 'cal_ev_' + Date.now();
-    let reservation: CarReservation | undefined;
-    let googleEventId: string | undefined = eventData.googleEventId;
-    let htmlLink: string | undefined = eventData.htmlLink;
-    let isSyncedWithGoogle = eventData.isSyncedWithGoogle || false;
-
-    // Check if auto car reservation is requested or default for work events
-    if (eventData.createsCarReservation) {
-      const bufferBefore = eventData.bufferBeforeMinutes ?? settings.defaultTravelBufferBefore;
-      const bufferAfter = eventData.bufferAfterMinutes ?? settings.defaultTravelBufferAfter;
-
-      const { reservationStart, reservationEnd } = calculateBufferedTime(
-        eventData.startTime,
-        eventData.endTime,
-        bufferBefore,
-        bufferAfter
-      );
-
-      const resResult = createCarReservation({
-        vehicleId: activeVehicle.id,
-        memberId: eventData.memberId,
-        memberName: eventData.memberName,
-        startTime: reservationStart,
-        endTime: reservationEnd,
-        purpose: `${eventData.isWorkRelated ? 'Jobb: ' : ''}${eventData.title}${
-          eventData.location ? ` (${eventData.location})` : ''
-        } (inkl. ${bufferBefore}m reise før / ${bufferAfter}m etter)`,
-        isWorkRelated: eventData.isWorkRelated,
-        source: 'google_calendar',
-        calendarEventId: eventId,
-        status: 'confirmed',
-        location: eventData.location,
-        bufferBeforeMinutes: bufferBefore,
-        bufferAfterMinutes: bufferAfter,
-      });
-
-      reservation = resResult.reservation;
-    }
-
-    // Google Calendar is read-only: Events created in the app are saved locally and in Firestore,
-    // and NEVER pushed to the user's external Google Calendar.
-    const targetCalendarId = settings.googleCalendarConfig?.calendarId || 'primary';
-
-    const newEvent: CalendarEvent = {
-      ...eventData,
-      id: eventId,
-      vehicleReservationId: reservation?.id,
-      googleEventId,
-      googleCalendarId: targetCalendarId,
-      htmlLink,
-      isSyncedWithGoogle,
-      lastSyncedAt: isSyncedWithGoogle ? new Date().toISOString() : undefined,
-    };
-
-    setCalendarEvents((prev) => [...prev, newEvent]);
-    saveCalendarEventToFirestore(newEvent).catch(console.error);
-    return { event: newEvent, reservation };
   };
 
   const deleteCalendarEvent = async (id: string) => {
@@ -2612,7 +2545,6 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         updateCarRules,
         calendarConnections,
         calendarEvents,
-        addCalendarEvent,
         deleteCalendarEvent,
         syncCalendar,
         syncTwoWayWithGoogle,
