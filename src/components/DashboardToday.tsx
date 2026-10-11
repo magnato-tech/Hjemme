@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useFamily } from '../context/FamilyContext';
 import {
   Car,
@@ -18,7 +18,7 @@ import {
   RotateCw,
   Lock,
 } from './Icons';
-import { formatNorwegianDate, formatTime, formatTimeRange, isToday } from '../utils/dateUtils';
+import { formatNorwegianDate, formatTime, formatTimeRange, isEventOnDate, isToday } from '../utils/dateUtils';
 import { ActiveTab } from './Header';
 
 interface DashboardTodayProps {
@@ -37,6 +37,7 @@ export const DashboardToday: React.FC<DashboardTodayProps> = ({
   const {
     activeMember,
     activeVehicle,
+    vehicles,
     reservations,
     calendarEvents,
     taskInstances,
@@ -57,8 +58,43 @@ export const DashboardToday: React.FC<DashboardTodayProps> = ({
     Math.round((completedPoints / (activeMember.weeklyPointsGoal || 1)) * 100)
   );
 
-  // Today's calendar events
-  const todayCalendarEvents = calendarEvents.filter((ev) => isToday(ev.startTime));
+  // Today's calendar events (including direct car reservations and multi-day/overnight events)
+  const todayCalendarEvents = useMemo(() => {
+    const today = new Date();
+    const list = [...calendarEvents.filter((ev) => isEventOnDate(ev, today))];
+    const existingIds = new Set(list.map((e) => e.vehicleReservationId || e.id));
+    const existingCalIds = new Set(list.map((e) => e.id));
+
+    reservations.forEach((res) => {
+      if (res.status === 'cancelled' || !isEventOnDate(res, today)) return;
+      if (
+        (res.calendarEventId && existingCalIds.has(res.calendarEventId)) ||
+        existingIds.has(res.id)
+      ) {
+        return;
+      }
+      const vehicle = vehicles.find((v) => v.id === res.vehicleId);
+      list.push({
+        id: res.calendarEventId || `cal_res_${res.id}`,
+        memberId: res.memberId,
+        memberName: res.memberName,
+        calendarId: 'car_reservations',
+        title: res.purpose ? `🚗 Bil: ${res.purpose}` : `🚗 Bilreservasjon (${vehicle?.name || 'Familiebil'})`,
+        startTime: res.startTime,
+        endTime: res.endTime,
+        location: res.location,
+        description: res.notes,
+        isWorkRelated: res.isWorkRelated || false,
+        createsCarReservation: true,
+        vehicleReservationId: res.id,
+        isConfidential: res.isConfidential || false,
+      });
+    });
+
+    return list.sort(
+      (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
+  }, [calendarEvents, reservations, vehicles]);
 
   // Today's car reservations
   const todayReservations = reservations
@@ -326,10 +362,14 @@ export const DashboardToday: React.FC<DashboardTodayProps> = ({
                       <p className="text-sm text-slate-800 font-medium">{ev.title}</p>
                     </div>
 
-                    {ev.createsCarReservation && (
-                      <span className="text-[11px] font-medium text-orange-900 bg-orange-50/90 border border-orange-200/80 px-2.5 py-1 rounded-xl shrink-0 flex items-center gap-1 shadow-2xs">
-                        <Car className="w-3 h-3 text-orange-600" />
-                        <span>Reserverer bil (+40m)</span>
+                    {(ev.createsCarReservation || ev.vehicleReservationId || ev.calendarId === 'car_reservations') && (
+                      <span className="text-[11px] font-medium text-amber-900 bg-amber-50/90 border border-amber-200/80 px-2.5 py-1 rounded-xl shrink-0 flex items-center gap-1 shadow-2xs">
+                        <Car className="w-3 h-3 text-amber-600" />
+                        <span>
+                          {ev.calendarId === 'car_reservations'
+                            ? 'Bilreservert'
+                            : `Reserverer bil (+${ev.bufferBeforeMinutes || 40}m)`}
+                        </span>
                       </span>
                     )}
                   </div>

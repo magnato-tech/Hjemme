@@ -198,6 +198,51 @@ export function isEventFutureOrActive(
 }
 
 /**
+ * Checks if a calendar event (which may be a timed event, overnight event, or multi-day event)
+ * is active or occurs on a specific target date.
+ */
+export function isEventOnDate(
+  event: { startTime: string | Date; endTime?: string | Date },
+  targetDate: Date | string
+): boolean {
+  if (!event || !event.startTime) return false;
+  const target = parseLocalDate(targetDate);
+  if (isNaN(target.getTime())) return false;
+
+  const targetDayStart = new Date(
+    target.getFullYear(),
+    target.getMonth(),
+    target.getDate(),
+    0,
+    0,
+    0,
+    0
+  ).getTime();
+  const targetDayEnd = new Date(
+    target.getFullYear(),
+    target.getMonth(),
+    target.getDate(),
+    23,
+    59,
+    59,
+    999
+  ).getTime();
+
+  const start = parseLocalDate(event.startTime).getTime();
+  if (isNaN(start)) return false;
+
+  const end = event.endTime ? parseLocalDate(event.endTime).getTime() : start;
+
+  // If event ends exactly at 00:00:00 on the target day from the previous day,
+  // do not treat it as part of target day unless it has 0 duration.
+  if (end > start && end === targetDayStart) {
+    return false;
+  }
+
+  return start <= targetDayEnd && end >= targetDayStart;
+}
+
+/**
  * Adds minutes to an ISO string or Date and returns ISO string
  */
 export function addMinutes(dateStr: string | Date, minutes: number): string {

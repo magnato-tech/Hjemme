@@ -68,6 +68,8 @@ export interface CalendarEvent {
   lastSyncedAt?: string;
   isConfidential?: boolean; // When true, rendered as "Opptatt" to protect pastoral/confidential duties
   privacyMode?: 'full' | 'busy_only';
+  isAllDay?: boolean;
+  status?: string;
 }
 
 export interface CalendarConnection {

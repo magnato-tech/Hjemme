@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   evaluateCalendarEventCarReservation,
   isLikelyWorkTrip,
+  SAMPLE_GOOGLE_CALENDARS,
 } from '../utils/googleCalendarService';
 
 describe('googleCalendarService', () => {
@@ -91,4 +92,13 @@ describe('googleCalendarService', () => {
     });
     expect(result.shouldCreateCar).toBe(true);
   });
+
+  it('jobbkalender i SAMPLE_GOOGLE_CALENDARS har gul/amber farge', () => {
+    const jobbCal = SAMPLE_GOOGLE_CALENDARS.find((c: any) =>
+      c.id.includes('jobb') || c.summary.toLowerCase().includes('jobb')
+    );
+    expect(jobbCal).toBeDefined();
+    expect(jobbCal?.backgroundColor).toBe('#f59e0b');
+  });
 });
+

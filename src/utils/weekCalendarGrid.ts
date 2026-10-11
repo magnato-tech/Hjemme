@@ -48,10 +48,14 @@ export function timeRangeToGridStyle(
 }
 
 export function isAllDayEvent(ev: CalendarEvent): boolean {
+  if (ev.isAllDay) return true;
   const start = new Date(ev.startTime);
   const end = new Date(ev.endTime);
   const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-  return start.getHours() === 0 && start.getMinutes() === 0 && durationHours >= 20;
+  return (
+    (start.getHours() === 0 && start.getMinutes() === 0 && durationHours >= 20) ||
+    (start.getHours() === 8 && start.getMinutes() === 0 && end.getHours() === 17 && durationHours >= 8)
+  );
 }
 
 export interface PositionedTimedEvent {

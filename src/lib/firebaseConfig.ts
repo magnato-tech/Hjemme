@@ -1,3 +1,5 @@
+import fallbackConfig from '../../firebase-applet-config.json';
+
 export interface FirebaseAppletConfig {
   apiKey: string;
   authDomain: string;
@@ -9,23 +11,33 @@ export interface FirebaseAppletConfig {
   oAuthClientId: string;
 }
 
-function env(key: string, defaultValue = ''): string {
-  const value = import.meta.env[key];
-  if (!value || typeof value !== 'string') {
-    return defaultValue;
+const rawFallback: Partial<FirebaseAppletConfig> = fallbackConfig || {};
+
+function envOrFallback(key: string, fallbackKey: keyof FirebaseAppletConfig, defaultVal = ''): string {
+  const envVal = import.meta.env[key];
+  if (typeof envVal === 'string' && envVal.trim()) {
+    return envVal.trim();
   }
-  return value;
+  const fileVal = rawFallback[fallbackKey];
+  if (typeof fileVal === 'string' && fileVal.trim()) {
+    return fileVal.trim();
+  }
+  return defaultVal;
 }
 
 export const firebaseConfig: FirebaseAppletConfig = {
-  apiKey: env('VITE_FIREBASE_API_KEY'),
-  authDomain: env('VITE_FIREBASE_AUTH_DOMAIN'),
-  projectId: env('VITE_FIREBASE_PROJECT_ID'),
-  storageBucket: env('VITE_FIREBASE_STORAGE_BUCKET'),
-  messagingSenderId: env('VITE_FIREBASE_MESSAGING_SENDER_ID'),
-  appId: env('VITE_FIREBASE_APP_ID'),
-  firestoreDatabaseId: env('VITE_FIREBASE_FIRESTORE_DATABASE_ID', 'ai-studio-remixhomeapp-625f37a7-cb03-43da-929f-5f2c6b42511e'),
-  oAuthClientId: env('VITE_GOOGLE_OAUTH_CLIENT_ID'),
+  apiKey: envOrFallback('VITE_FIREBASE_API_KEY', 'apiKey'),
+  authDomain: envOrFallback('VITE_FIREBASE_AUTH_DOMAIN', 'authDomain'),
+  projectId: envOrFallback('VITE_FIREBASE_PROJECT_ID', 'projectId'),
+  storageBucket: envOrFallback('VITE_FIREBASE_STORAGE_BUCKET', 'storageBucket'),
+  messagingSenderId: envOrFallback('VITE_FIREBASE_MESSAGING_SENDER_ID', 'messagingSenderId'),
+  appId: envOrFallback('VITE_FIREBASE_APP_ID', 'appId'),
+  firestoreDatabaseId: envOrFallback(
+    'VITE_FIREBASE_FIRESTORE_DATABASE_ID',
+    'firestoreDatabaseId',
+    'ai-studio-remixhomeapp-625f37a7-cb03-43da-929f-5f2c6b42511e'
+  ),
+  oAuthClientId: envOrFallback('VITE_GOOGLE_OAUTH_CLIENT_ID', 'oAuthClientId'),
 };
 
 export const isFirebaseConfigured = Boolean(
@@ -33,4 +45,5 @@ export const isFirebaseConfigured = Boolean(
   firebaseConfig.projectId &&
   firebaseConfig.appId
 );
+
 

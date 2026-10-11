@@ -243,7 +243,7 @@ export const SAMPLE_GOOGLE_CALENDARS: GoogleCalendarItem[] = [
     summary: 'Jobb, Møter & Oppdrag (Magnar)',
     description: 'Arbeidsavtaler, befaringer og klientmøter som krever bil',
     primary: false,
-    backgroundColor: '#059669',
+    backgroundColor: '#f59e0b',
     foregroundColor: '#ffffff',
     accessRole: 'owner',
   },

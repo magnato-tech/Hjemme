@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Lock } from './Icons';
 import { CalendarEvent } from '../types';
-import { formatTime, getWeekNumber, isSameDay, isToday } from '../utils/dateUtils';
+import { formatTime, getWeekNumber, isEventOnDate, isSameDay, isToday } from '../utils/dateUtils';
 import {
   getNowLineFraction,
   getWeekDates,
@@ -70,7 +70,7 @@ export const WeekTimeGrid: React.FC<WeekTimeGridProps> = ({
   const eventsByDay = useMemo(
     () =>
       weekDates.map((date) => {
-        const dayEvents = events.filter((e) => isSameDay(e.startTime, date));
+        const dayEvents = events.filter((e) => isEventOnDate(e, date));
         return {
           date,
           allDay: dayEvents.filter(isAllDayEvent),

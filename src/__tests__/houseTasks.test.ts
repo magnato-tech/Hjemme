@@ -72,8 +72,8 @@ describe('husoppgaver – brukerflyt', () => {
 
     it('Marcus når ukemål med siste oppgave', () => {
       let instances = createHouseWeekInstances();
-      instances = applyCompleteTask(instances, 'inst_koste_nede_avail', marcus, templates);
-      instances = applyCompleteTask(instances, 'inst_tomme_oppvask_avail', marcus, templates);
+      instances = applyCompleteTask(instances, 'inst_koste_nede_avail', marcus, templates, '2026-09-25T12:00:00Z');
+      instances = applyCompleteTask(instances, 'inst_tomme_oppvask_avail', marcus, templates, '2026-09-25T13:00:00Z');
 
       const completed = getMemberCompletedPoints(instances, marcus.id, pointsAsOf);
       const { remainingPoints, progressPercent } = getMemberPointsProgress(completed, marcus.weeklyPointsGoal);
@@ -124,8 +124,8 @@ describe('husoppgaver – brukerflyt', () => {
 
     it('poeng telles separat per familiemedlem', () => {
       let instances = createHouseWeekInstances();
-      instances = applyCompleteTask(instances, 'inst_koste_nede_avail', synelle, templates);
-      instances = applyCompleteTask(instances, 'inst_tomme_oppvask_avail', magnar, templates);
+      instances = applyCompleteTask(instances, 'inst_koste_nede_avail', synelle, templates, '2026-09-25T12:00:00Z');
+      instances = applyCompleteTask(instances, 'inst_tomme_oppvask_avail', magnar, templates, '2026-09-25T13:00:00Z');
 
       expect(getMemberCompletedPoints(instances, marcus.id, pointsAsOf)).toBe(7);
       expect(getMemberCompletedPoints(instances, synelle.id, pointsAsOf)).toBe(2);

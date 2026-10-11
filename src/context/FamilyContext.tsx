@@ -622,6 +622,54 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [isLoaded, members, taskInstances, settings.lastFinalizedPointsWeekKey, firebaseUser]);
 
+  // Auto-sync car reservations into calendarEvents so all reservations always appear in the calendar
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    const existingResEventIds = new Set(
+      calendarEvents.map((e) => e.vehicleReservationId || e.id).filter(Boolean)
+    );
+    const existingCalIds = new Set(calendarEvents.map((e) => e.id));
+
+    const missingEvents: CalendarEvent[] = [];
+    reservations.forEach((res) => {
+      if (res.status === 'cancelled') return;
+      if (
+        (res.calendarEventId && existingCalIds.has(res.calendarEventId)) ||
+        existingResEventIds.has(res.id)
+      ) {
+        return;
+      }
+
+      const vehicle = vehicles.find((v) => v.id === res.vehicleId);
+      const calEventId = res.calendarEventId || `cal_res_${res.id}`;
+      missingEvents.push({
+        id: calEventId,
+        memberId: res.memberId,
+        memberName: res.memberName,
+        calendarId: 'car_reservations',
+        title: res.purpose ? `🚗 Bil: ${res.purpose}` : `🚗 Bilreservasjon (${vehicle?.name || 'Familiebil'})`,
+        startTime: res.startTime,
+        endTime: res.endTime,
+        location: res.location,
+        description: res.notes || (res.isWorkRelated ? 'Jobbreise' : 'Privattur'),
+        isWorkRelated: res.isWorkRelated || false,
+        createsCarReservation: true,
+        vehicleReservationId: res.id,
+        isConfidential: res.isConfidential || false,
+      });
+    });
+
+    if (missingEvents.length > 0) {
+      setCalendarEvents((prev) => [...missingEvents, ...prev]);
+      if (firebaseUser) {
+        missingEvents.forEach((ev) => {
+          saveCalendarEventToFirestore(ev).catch(console.error);
+        });
+      }
+    }
+  }, [isLoaded, reservations, vehicles, firebaseUser]);
+
   // Firebase Auth Listener & Firestore Real-Time Sync
   useEffect(() => {
     let unsubs: (() => void)[] = [];
@@ -988,14 +1036,47 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       reservationData.vehicleId
     );
 
+    const newResId = 'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+    const calEventId = reservationData.calendarEventId || ('cal_res_' + newResId);
+
     const newReservation: CarReservation = {
       ...reservationData,
-      id: 'res_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      id: newResId,
+      calendarEventId: calEventId,
       createdAt: new Date().toISOString(),
       status: isAvailable ? 'confirmed' : 'pending_conflict',
     };
 
     setReservations((prev) => [newReservation, ...prev]);
+
+    // If this reservation was not created by addCalendarEvent, automatically create a linked CalendarEvent
+    // so it shows up in the calendar immediately!
+    if (!reservationData.calendarEventId) {
+      const targetVehicle = vehicles.find((v) => v.id === reservationData.vehicleId) || activeVehicle;
+      const calEvent: CalendarEvent = {
+        id: calEventId,
+        memberId: newReservation.memberId,
+        memberName: newReservation.memberName,
+        calendarId: 'car_reservations',
+        title: newReservation.purpose
+          ? `🚗 Bil: ${newReservation.purpose}`
+          : `🚗 Bilreservasjon (${targetVehicle?.name || 'Familiebil'})`,
+        startTime: newReservation.startTime,
+        endTime: newReservation.endTime,
+        location: newReservation.location,
+        description: newReservation.notes || (newReservation.isWorkRelated ? 'Jobbreise' : 'Privattur'),
+        isWorkRelated: newReservation.isWorkRelated || false,
+        createsCarReservation: true,
+        vehicleReservationId: newResId,
+        isConfidential: newReservation.isConfidential || false,
+      };
+
+      setCalendarEvents((prev) => [calEvent, ...prev.filter((e) => e.id !== calEventId && e.vehicleReservationId !== newResId)]);
+
+      if (firebaseUser) {
+        saveCalendarEventToFirestore(calEvent).catch(console.error);
+      }
+    }
 
     if (firebaseUser) {
       saveReservationToFirestore(newReservation).catch(console.error);
@@ -1009,9 +1090,23 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const cancelReservation = (id: string) => {
+    const resToCancel = reservations.find((r) => r.id === id);
     setReservations((prev) => prev.filter((r) => r.id !== id));
+    setCalendarEvents((prev) =>
+      prev.filter(
+        (e) =>
+          e.vehicleReservationId !== id &&
+          (!resToCancel?.calendarEventId || e.id !== resToCancel.calendarEventId) &&
+          e.id !== `cal_res_${id}`
+      )
+    );
     if (firebaseUser) {
       deleteReservationFromFirestore(id).catch(console.error);
+      if (resToCancel?.calendarEventId) {
+        deleteCalendarEventFromFirestore(resToCancel.calendarEventId).catch(console.error);
+      } else {
+        deleteCalendarEventFromFirestore(`cal_res_${id}`).catch(console.error);
+      }
     }
   };
 
@@ -1082,6 +1177,9 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const ev = calendarEvents.find((e) => e.id === id);
     if (ev?.vehicleReservationId) {
       cancelReservation(ev.vehicleReservationId);
+    } else if (id.startsWith('cal_res_')) {
+      const resId = id.replace('cal_res_', '');
+      cancelReservation(resId);
     }
 
     if (firebaseUser) {
@@ -1955,15 +2053,26 @@ export const FamilyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const calendars = await fetchUserGoogleCalendars(token);
       setAvailableGoogleCalendars(calendars);
 
-      // Perform initial 2-way synchronization with the configured or primary calendar
-      const targetCalendarId = settings.googleCalendarConfig?.calendarId || 'primary';
-      const res = await executeTwoWayCalendarSync({
+      // Perform initial 2-way synchronization with all active calendars (including work calendar)
+      const activeCalendars = calendars
+        .filter((c) => !(settings.disabledCalendarIds || []).includes(c.id))
+        .map((c) => ({
+          id: c.id,
+          name: c.customName || c.summary,
+          assignedMemberId: c.assignedMemberId,
+        }));
+
+      const calendarsToSync = activeCalendars.length > 0
+        ? activeCalendars
+        : [{ id: settings.googleCalendarConfig?.calendarId || 'primary', name: 'Primærkalender' }];
+
+      const res = await executeMultiCalendarSync({
         accessToken: token,
         localEvents: calendarEvents,
         localReservations: reservations,
         members,
         targetMemberId: 'member_magnar',
-        calendarId: targetCalendarId,
+        calendars: calendarsToSync,
         settings,
         vehicleId: activeVehicle.id,
       });

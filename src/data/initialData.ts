@@ -170,6 +170,7 @@ export const initialCalendarEvents: CalendarEvent[] = [
     memberId: 'member_magnar',
     memberName: 'Magnar',
     calendarId: 'cal_conn_1',
+    googleCalendarId: 'c_jobb_totland@group.calendar.google.com',
     title: 'Samtale i Lillesand',
     startTime: `${todayDateStr}T14:00:00`,
     endTime: `${todayDateStr}T15:30:00`,

@@ -47,13 +47,18 @@ export const Header: React.FC<HeaderProps> = ({
   const completedPoints = getMemberCompletedPoints(activeMember.id);
   const remainingPoints = Math.max(0, activeMember.weeklyPointsGoal - completedPoints);
 
+  const nowMs = Date.now();
+  const upcomingReservationsCount = reservations.filter(
+    (r) => r.status !== 'cancelled' && new Date(r.endTime).getTime() >= nowMs
+  ).length;
+
   const navItems = [
     { id: 'dashboard' as ActiveTab, label: 'I dag', icon: Home, badge: null },
     {
       id: 'car' as ActiveTab,
       label: 'Bil',
       icon: Car,
-      badge: reservations.length > 0 ? reservations.length : null,
+      badge: upcomingReservationsCount > 0 ? upcomingReservationsCount : null,
     },
     {
       id: 'tasks' as ActiveTab,
