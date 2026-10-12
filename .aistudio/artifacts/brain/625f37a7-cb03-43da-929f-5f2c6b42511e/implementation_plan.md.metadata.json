@@ -1,6 +1,6 @@
 {
-  "summary":  "Revidert implementeringsplan med Magnars to spesifikke iCal-lenker (Privat og Jobb), automatisk felles skylagring i Firestore, synkronisering på tvers av enheter uten innloggingskrav på veggskjerm/live, og oppdatering av sikkerhetsregler.",
-  "updatedAt":  "2026-10-11T20:51:11.139611746Z",
+  "summary":  "Implementasjonsplan for obligatorisk Google-innlogging og tilgangskontroll på iPhone og mobile enheter. Beskytter familiens kalendere og data mot uautorisert innsyn, med forhåndsgodkjente Google-kontoer administrert direkte i innstillinger.",
+  "updatedAt":  "2026-10-12T07:25:33.740610663Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

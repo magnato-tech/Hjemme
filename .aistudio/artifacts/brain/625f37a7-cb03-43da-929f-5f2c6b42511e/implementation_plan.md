@@ -1,44 +1,107 @@
-# Implementeringsplan: Integrering av Magnars kalendere & felles skylagring (Firestore)
+# Obligatorisk Google-innlogging og Tilgangskontroll for iPhone
 
-## 1. Bakgrunn & Formål
-Brukeren har oppgitt to konkrete iCal-adresser for henholdsvis privat- og jobbkalender:
-1. **Magnar privat**: `https://calendar.google.com/calendar/ical/magnar.totland%40gmail.com/private-66fe708fcd5f1b4512bc2b290771bd6d/basic.ics`
-2. **Magnar jobb**: `https://calendar.google.com/calendar/ical/1963c127a57e7b3059e7ad5bafb035b9ddb653f1143a3f5ee723a0b1cec7637e%40group.calendar.google.com/private-816d2421b052b34fcb11b9142ecc975d/basic.ics`
-
-Målet er å sikre at:
-- Disse kalenderne automatisk legges inn som standard og gjøres tilgjengelige i den felles sky-databasen (Firestore).
-- Når noen åpner den publiserte/delte live-appen på en ny nettleser, mobil eller veggskjerm (uten å være eksplisitt innlogget med Google Auth), skal kalenderne og avtalene **alltid vises umiddelbart**.
-- Nye kalendere eller innstillinger som legges til i appen skrives direkte til Firestore slik at alle enheter synkroniseres sømløst.
+Sikre familiens fellesløsning mot innsyn fra utenforstående ved å innføre en dedikert påloggingsport med Google Auth på iPhone og mobile enheter, der kun forhåndsgodkjente Google-kontoer (med `magnar.totland@gmail.com` som standard) får tilgang til kalendere, bilreservasjoner og oppgaver.
 
 ---
 
-## 2. Arkitektur & Løsningssteg
+### User Review & Critical Decisions
 
-### Steg 1: Standardkonfigurasjon med de to iCal-kalenderne
-- Oppdatere standarddata (`src/data/initialData.ts`) med de to konkrete iCal-lenkene:
-  - **Magnar privat**: Koblet til Magnar (`member_magnar`), visningsfarge smaragdgrønn (`#059669`), aktiv for visning.
-  - **Magnar jobb**: Koblet til Magnar (`member_magnar`), visningsfarge kongeblå (`#2563eb`), markert som bil-kalender (`isCarCalendar: true`) for automatisk evaluering av reiser og bilreservasjon.
-- Sørge for at appen automatisk initialiserer og lagrer disse i Firestore dersom de ikke allerede finnes i skyen.
-
-### Steg 2: Firestore-synkronisering uavhengig av innloggingstilstand
-- I `FamilyContext.tsx` aktiveres Firestore-lyttere (`subscribeSettings`, `subscribeCalendarEvents`, `subscribeReservations`, osv.) umiddelbart ved oppstart, ikke kun etter at en bruker har logget inn med Google-konto.
-- Ved endring i kalendere i innstillinger (legge til ny iCal, slå av/på visning, endre farge/navn) lagres dette direkte til Firestore under fellesdokumentet for familien `totland`.
-- Når enhetene lytter på `onSnapshot`, vil enhver oppdatering på én enhet speiles direkte på alle andre enheter i sanntid.
-
-### Steg 3: Oppdatering av Firestore Sikkerhetsregler (`firestore.rules`)
-- Tidligere krevde `isFamilyMember()` at `request.auth` var verifisert og matchet `magnar.totland@gmail.com`. Dette sperret uinnloggede fellesenheter (f.eks. nettbrett på kjøkkenet eller live-visning).
-- Justere reglene slik at:
-  - Lesing (`get` og `list`) av familiens ressurser (`familyId == 'totland'`) tillates for husholdningen.
-  - Skriving/oppdatering av kalenderinnstillinger og felleshendelser tillates validert i henhold til datastrukturene.
-  - Deployere de oppdaterte reglene til prosjektet via Firebase-verktøyene.
-
-### Steg 4: Henting og caching av iCal-hendelser
-- Verifisere at iCal-proxyen og parsing i `googleCalendarService.ts` og `icalFeed.ts` henter begge iCal-feeder uten CORS-feil.
-- Kjøre automatisk bakgrunnssynkronisering ved oppstart og med intervall, slik at avtaler fra begge kalendere (både privat og jobb) dukker opp i kalendervisningen og danner grunnlag for bilreservasjoner.
+> [!IMPORTANT]
+> **Bekreftede valg fra intervjufasen:**
+> - **Obligatorisk innlogging:** Appen krever fullført Google-innlogging før data, kalendere eller menyer vises på iPhone. Uautoriserte gjester eller fremmede får ikke innsyn i noen personlige detaljer.
+> - **Godkjente kontoer:** Kun Google-kontoer som er eksplisitt godkjent av familien i innstillingene får adgang. Standard administratorkonto settes til `magnar.totland@gmail.com`.
+> - **Enkel administrasjon:** Voksne/administratorer kan legge til og fjerne godkjente familiemedlemmer og e-postadresser direkte under *Innstillinger → Tilgang & Sikkerhet*.
 
 ---
 
-## 3. Verifisering og testing
-- Bygge og kjøre applikasjonen (`compile_applet`).
-- Verifisere at begge kalenderne («Magnar privat» og «Magnar jobb») lastes inn med sine respektive farger og avtaler.
-- Teste at endringer i innstillinger synkroniseres til Firestore, og at live-modus ikke er tom.
+### 1. Overview & Core Concept
+
+- **Hva løsningen gjør:** Når appen åpnes på en iPhone eller nettleser der brukeren ikke er autentisert, møtes brukeren av en ren, berøringsvennlig velkomst- og sikkerhetsskjerm med «Logg inn med Google». Når brukeren logger inn, sjekkes e-postadressen mot familiens godkjente liste. Dersom kontoen er godkjent, åpnes dashbordet sømløst. Er kontoen ukjent, stoppes tilgangen og det vises en forklarende melding med mulighet til å bytte konto eller kontakte familieadmin.
+- **Målgruppe:** Magnar og familiens medlemmer på personlige iPhones, iPader og fellesenheter.
+- **Hovedverdi:** 100 % beskyttelse av personlige avtaler, jobbkalendere og bilbookinger mot uønsket innsyn, samtidig som innloggingen bevares i nettlesersesjonen slik at man slipper å logge inn på nytt ved hver app-åpning.
+
+---
+
+### 2. User Experience & Visual Design
+
+#### A. Brukerflyt ved første gangs bruk på iPhone
+1. **Første gangs åpning (Uinnlogget tilstand):**
+   - Brukeren ser en ren, innbydende velkomstskjerm: *Totland Familieportal* med subtil undertittel *«Sikker tilgang for familien»*.
+   - Ingen kalenderdata, personnavn eller avtaler lastes eller vises i bakgrunnen.
+   - En tydelig, 48px høy Google-innloggingsknapp med offisiell Google-logo og teksten *«Fortsett med Google»*.
+   - Trygg og tydelig sikkerhetsinfo: *«Kun forhåndsgodkjente Google-kontoer har tilgang til familiens kalendere og data.»*
+2. **Innloggingsprosess:**
+   - Brukeren trykker knappen. Google-kontovelgeren åpnes.
+   - Ved vellykket innlogging verifiseres `user.email`.
+   - Hvis godkjent (f.eks. `magnar.totland@gmail.com`): Umiddelbar overgang med myk animasjon til dashbordet. Innloggingsstatus lagres i Firebase Auth og lokal tilstand.
+   - Hvis ikke godkjent: Tydelig informasjonskort: *«Kontoen din ([epost]) er ikke registrert i familiens tilgangsliste. Be Magnar legge deg til i innstillingene.»* med knapp for *«Prøv en annen Google-konto»*.
+3. **Senere besøk:**
+   - Firebase Auth husker sesjonen automatisk (persistent login på iPhone Safari / PWA). Brukeren slipper å logge inn hver gang de åpner appen.
+   - Brukerens avatar og e-post vises diskré i toppmenyen med enkel mulighet for utlogging.
+
+#### B. Administrasjon i Innstillinger (*Tilgang og Sikkerhet*)
+- Ny fane/seksjon i innstillingspanelet: **Godkjente Google-kontoer for familien**.
+- Viser liste over aktive, godkjente e-postadresser:
+  - `magnar.totland@gmail.com` (Admin / Eier)
+  - Mulighet til å legge til nye e-postadresser (f.eks. ektefelle, barn) med ett klikk.
+  - Sletteknapp for å fjerne tilgang umiddelbart dersom en enhet mistes eller tilgang skal trekkes tilbake.
+
+#### C. Visuell stil og ergonomi for iPhone (Touch-first)
+- **Tommelsone-optimalisert:** Hovedhandlingen for innlogging plasseres i den naturlige tommelsonen (nederste halvdel av skjermen) med solid berøringsflate (minst 48px høyde, god kontrast).
+- **Rolig, nordisk estetikk:** Dyp skifergrå (`#0f172a`), myk hvit bakgrunn, varme aksenter og ingen forstyrrende AI-effekter eller overflødige pille-elementer.
+- **Tydelige feilmeldinger:** Dersom Safari blokkerer popup eller nettverket er nede, gis umiddelbar og forståelig veiledning på norsk.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+- **Beslutning 1: Obligatorisk port for uautentiserte enheter fremfor kun advarsel**
+  - *Valgt løsning:* Blokkerende sikkerhetsskjerm før noe innhold eller kalenderdata vises.
+  - *Hvorfor:* Gir reell trygghet mot innsyn når lenken deles eller åpnes på ukjente enheter.
+  - *Alternativ vurdert:* Valgfri innlogging eller bare skjul kalendere. Forkastet fordi brukeren eksplisitt ba om påkrevd innlogging for å hindre innsyn.
+- **Beslutning 2: E-postbasert godkjenningsliste i familiens innstillinger**
+  - *Valgt løsning:* `settings.allowedEmails` i familiens Firestore-dokument, med `magnar.totland@gmail.com` som initiell eier.
+  - *Hvorfor:* Fleksibelt for Magnar å godkjenne nye enheter og familiemedlemmer uten å måtte konfigurere Firebase Console eller kode.
+  - *Alternativ vurdert:* Kun låse til én hardkodet e-post. Forkastet for å støtte hele familien.
+- **Beslutning 3: Sesjonspersistens i Firebase Auth**
+  - *Valgt løsning:* Benytte standard `browserLocalPersistence` i Firebase Auth slik at iPhone og Safari husker påloggingen.
+  - *Hvorfor:* Fantastisk hverdagsbruk – man logger inn én gang ved første gangs bruk, og slipper friksjon i hverdagen.
+
+---
+
+### 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       iPhone / Safari                       │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │ Uautentisert? ───► AuthGate / iPhoneLoginScreen     │   │
+│   │                    • "Fortsett med Google"          │   │
+│   │                    • Feilhåndtering & Safari popup  │   │
+│   └──────────────────────────┬──────────────────────────┘   │
+│                              │ signInWithGoogle()           │
+│                              ▼                              │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │ Firebase Auth: Returnerer user.email                │   │
+│   │ Sjekk: Er email i settings.allowedEmails?          │   │
+│   │  ├── JA  ──► Lås opp FamilyContext & vis App        │   │
+│   │  └── NEI ──► Vis "Ikke godkjent"-skjerm med loggut  │   │
+│   └─────────────────────────────────────────────────────┘   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Familiens Firestore & Innstillinger            │
+│   • settings.allowedEmails: ['magnar.totland@gmail.com',...]│
+│   • Admin kan legge til / fjerne adresser i AdminSettings   │
+│   • Firestore Security Rules sikrer lesing/skriving         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Nøkkelkomponenter og endringer:
+1. **`src/components/AuthGate.tsx`**: Ny sikkerhetskomponent som omslutter appen eller vises når `firebaseUser` mangler eller ikke er autorisert.
+2. **`src/types/index.ts` & `src/data/initialData.ts`**: Legge til `allowedEmails: string[]` i `HouseSettings` med `['magnar.totland@gmail.com']` som standard.
+3. **`src/context/FamilyContext.tsx`**: Tilby `isEmailAuthorized`, `addAllowedEmail`, `removeAllowedEmail` og lytte på auth-tilstand.
+4. **`src/components/AdminSettings.tsx`**: Legge til seksjon for administrasjon av godkjente Google-kontoer.
+5. **`src/components/Header.tsx`**: Vise innlogget brukerprofil på mobil og desktop, med ren utloggingsknapp.
